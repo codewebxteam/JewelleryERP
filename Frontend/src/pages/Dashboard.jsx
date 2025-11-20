@@ -14,29 +14,31 @@ import {
   statsCardsData,
   salesDataLineChart,
   topSellingProducts,
-  recentTransactions, // --- ADDED ---
+  recentTransactions,
 } from "../data/dummyData.jsx";
 import {
-  LineChart as ChartIcon, // --- ADDED: Aliased icon ---
+  LineChart as ChartIcon,
   Gem,
-  List, // --- ADDED ---
+  List,
 } from "lucide-react";
 
 const Dashboard = () => {
   return (
-    <div className="space-y-6">
-      {/* --- ADDED: Welcome Header --- */}
-      <div className="flex justify-between items-center">
+    <div className="space-y-6 px-3 sm:px-4 md:px-6 lg:px-0">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
         <div>
-          <h2 className="text-3xl font-bold text-gray-800">Welcome, Admin!</h2>
-          <p className="text-gray-500 mt-1">
+          <h2 className="text-2xl sm:text-3xl font-bold text-gray-800">
+            Welcome, Admin!
+          </h2>
+          <p className="text-gray-500 mt-1 text-sm sm:text-base">
             Here's a summary of your shop's activity.
           </p>
         </div>
       </div>
 
       {/* Stats Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {statsCardsData.map((stat) => (
           <StatCard
             key={stat.title}
@@ -44,21 +46,20 @@ const Dashboard = () => {
             value={stat.value}
             change={stat.change}
             changeType={stat.changeType}
-            icon={stat.icon} // --- ADDED: Passing icon prop ---
+            icon={stat.icon}
           />
         ))}
       </div>
 
       {/* Charts and Top Products Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Sales Line Chart (Takes 2/3 width on large screens) */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-lg border border-gray-200 hover:shadow-xl transition-shadow duration-300">
-          {/* --- UPDATED: Added icon to title --- */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+        {/* Sales Line Chart */}
+        <div className="lg:col-span-2 bg-white p-4 sm:p-6 rounded-lg shadow-lg border border-gray-200 transition-shadow duration-300">
           <h3 className="flex items-center text-lg font-semibold text-gray-900 mb-4">
             <ChartIcon size={22} className="mr-2 text-brand-gold" />
             Weekly Sales Report
           </h3>
-          <div style={{ width: "100%", height: 300 }}>
+          <div className="w-full h-64 sm:h-80">
             <ResponsiveContainer>
               <LineChart data={salesDataLineChart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
@@ -69,7 +70,7 @@ const Dashboard = () => {
                 <Line
                   type="monotone"
                   dataKey="sales"
-                  stroke="#D4AF37" // Brand Gold color
+                  stroke="#D4AF37"
                   strokeWidth={3}
                   activeDot={{ r: 8 }}
                 />
@@ -78,14 +79,13 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Top Selling Products (Takes 1/3 width) */}
-        <div className="bg-white p-6 rounded-lg shadow-lg border border-gray-200 hover:shadow-xl transition-shadow duration-300">
-          {/* --- UPDATED: Added icon to title --- */}
+        {/* Top Selling Products */}
+        <div className="bg-white p-4 sm:p-6 rounded-lg shadow-lg border border-gray-200 transition-shadow duration-300">
           <h3 className="flex items-center text-lg font-semibold text-gray-900 mb-4">
             <Gem size={22} className="mr-2 text-brand-gold" />
             Top Selling Products
           </h3>
-          {/* --- UPDATED: List design --- */}
+
           <ul className="space-y-3">
             {topSellingProducts.map((product) => (
               <li
@@ -113,45 +113,47 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* --- ADDED: New Recent Transactions Table --- */}
-      <div className="bg-white p-6 rounded-lg shadow-lg border border-gray-200 hover:shadow-xl transition-shadow duration-300">
+      {/* Recent Transactions */}
+      <div className="bg-white p-4 sm:p-6 rounded-lg shadow-lg border border-gray-200 transition-shadow duration-300">
         <h3 className="flex items-center text-lg font-semibold text-gray-900 mb-4">
           <List size={22} className="mr-2 text-brand-gold" />
           Recent Transactions
         </h3>
+
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 sm:px-6 py-3 text-left font-medium text-gray-500 uppercase">
                   Invoice ID
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 sm:px-6 py-3 text-left font-medium text-gray-500 uppercase">
                   Customer
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 sm:px-6 py-3 text-left font-medium text-gray-500 uppercase">
                   Amount
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <th className="px-4 sm:px-6 py-3 text-left font-medium text-gray-500 uppercase">
                   Status
                 </th>
               </tr>
             </thead>
+
             <tbody className="bg-white divide-y divide-gray-200">
               {recentTransactions.map((tx) => (
                 <tr key={tx.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-gray-900">
                     {tx.id}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                  <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-gray-700">
                     {tx.customerName}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                  <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-gray-700">
                     ₹{tx.amount.toLocaleString()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                     <span
-                      className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                      className={`px-3 py-1 inline-flex text-xs font-semibold rounded-full ${
                         tx.status === "Paid"
                           ? "bg-green-100 text-green-800"
                           : "bg-yellow-100 text-yellow-800"

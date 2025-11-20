@@ -1,8 +1,9 @@
 import React from "react";
 import { Routes, Route } from "react-router-dom";
 import MainLayout from "./components/MainLayout";
+import ProtectedRoute from "./components/ProtectedRoute";
 
-// Import Pages
+// pages
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Billing from "./pages/Billing";
@@ -13,11 +14,15 @@ import Reports from "./pages/Reports";
 function App() {
   return (
     <Routes>
-      {/* Route for the Login page (no sidebar/header) */}
       <Route path="/login" element={<Login />} />
 
-      {/* Routes that use the MainLayout (with sidebar/header) */}
-      <Route element={<MainLayout />}>
+      <Route
+        element={
+          <ProtectedRoute>
+            <MainLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route path="/" element={<Dashboard />} />
         <Route path="/billing" element={<Billing />} />
         <Route path="/girwi" element={<Girwi />} />
