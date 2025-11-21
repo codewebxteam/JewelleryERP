@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { stockData, invoiceHistory } from "../data/dummyData.jsx";
+import {  stockData } from "../data/dummyData.jsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import logoImg from "../assets/logo.png";
@@ -15,6 +15,7 @@ import {
   CheckCircle,
   Loader2,
   AlertCircle,
+  Pencil,
 } from "lucide-react";
 
 // --- Configuration ---
@@ -23,7 +24,7 @@ const SGST_RATE = 0.09;
 
 // --- Helpers ---
 const formatCurrency = (amount) =>
-  `Rs. ${amount.toLocaleString("en-IN", {
+  `Rs. ${Number(amount || 0).toLocaleString("en-IN", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
   })}`;
@@ -48,8 +49,8 @@ const numberToWords = (num) => {
     "Fifteen ",
     "Sixteen ",
     "Seventeen ",
-    "Eighteen ",
-    "Nineteen ",
+    "Eighteen",
+    "Nineteen",
   ];
   const b = [
     "",
@@ -94,12 +95,26 @@ const numberToWords = (num) => {
 };
 
 const Billing = () => {
+  // Load invoices from localStorage
+  const loadInvoices = () => {
+    const stored = localStorage.getItem("invoices");
+    return stored ? JSON.parse(stored) : invoiceHistory;
+  };
+
+  const [invoices, setInvoices] = useState(loadInvoices());
+
+  // Save invoices to localStorage whenever updated
+  useEffect(() => {
+    localStorage.setItem("invoices", JSON.stringify(invoices));
+  }, [invoices]);
+
   // --- Main State ---
-  const [invoices, setInvoices] = useState(invoiceHistory);
-  const [currentStock, setCurrentStock] = useState(stockData);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [loadingInvoiceId, setLoadingInvoiceId] = useState(null);
+
+  // NEW: Track invoice being edited
+  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
 
   // --- Invoice Form State ---
   const [customer, setCustomer] = useState({
@@ -115,52 +130,56 @@ const Billing = () => {
   const [receivedAmount, setReceivedAmount] = useState("");
 
   // --- New Item Input State ---
-  const [itemSearch, setItemSearch] = useState("");
-  const [showDropdown, setShowDropdown] = useState(false);
-  const [selectedStockItem, setSelectedStockItem] = useState(null);
-
-  const [newItemWeight, setNewItemWeight] = useState("");
-  const [newItemRate, setNewItemRate] = useState("");
-  const [newItemMakingCharge, setNewItemMakingCharge] = useState("");
-  const [newItemHsn, setNewItemHsn] = useState("7113");
-  const [newItemHuc, setNewItemHuc] = useState("");
+  const [itemName, setItemName] = useState("");
+  const [itemHsn, setItemHsn] = useState("7113");
+  const [itemHuc, setItemHuc] = useState("");
+  const [itemWeight, setItemWeight] = useState("");
+  const [itemRate, setItemRate] = useState("");
+  const [itemMaking, setItemMaking] = useState("");
 
   // --- Old Item Exchange State ---
   const [oldItemName, setOldItemName] = useState("");
   const [oldItemWeight, setOldItemWeight] = useState("");
   const [oldItemRate, setOldItemRate] = useState("");
 
-  const dropdownRef = useRef(null);
+  // --- Searchable product suggestions ---
+  const [productQuery, setProductQuery] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionsRef = useRef(null);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setShowDropdown(false);
+    const handleOutside = (e) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target)) {
+        setShowSuggestions(false);
       }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    };
+    document.addEventListener("click", handleOutside);
+    return () => document.removeEventListener("click", handleOutside);
   }, []);
 
-  // Filter stock based on search
-  const availableStock = useMemo(() => {
-    if (!itemSearch) return [];
-    return currentStock.filter(
-      (item) =>
-        item.name.toLowerCase().includes(itemSearch.toLowerCase()) &&
-        item.stock > 0
-    );
-  }, [itemSearch, currentStock]);
+  useEffect(() => {
+    if (!productQuery) {
+      setSuggestions([]);
+      return;
+    }
+    const q = productQuery.toLowerCase();
+    const filtered = stockData
+      .map((s) => s.name)
+      .filter((name, idx, arr) => arr.indexOf(name) === idx) // unique names
+      .filter((name) => name.toLowerCase().includes(q))
+      .slice(0, 6);
+    setSuggestions(filtered);
+    setShowSuggestions(true);
+  }, [productQuery]);
 
   // --- Financial Calculations ---
   const newItemsTotal = useMemo(
-    () => newItems.reduce((total, item) => total + item.amount, 0),
+    () => newItems.reduce((total, item) => total + Number(item.amount || 0), 0),
     [newItems]
   );
-  // Ensure this variable name matches what we use in handleSaveInvoice
   const oldItemsTotal = useMemo(
-    () => oldItems.reduce((total, item) => total + item.amount, 0),
+    () => oldItems.reduce((total, item) => total + Number(item.amount || 0), 0),
     [oldItems]
   );
 
@@ -187,129 +206,159 @@ const Billing = () => {
     return due > 0 ? due : 0;
   }, [grandTotal, receivedAmount]);
 
-  // --- Handlers ---
-  const handleSearchChange = (e) => {
-    setItemSearch(e.target.value);
-    setShowDropdown(true);
-  };
+  // --- Edit Invoice Handler ---
+  const handleEditInvoice = (invoice) => {
+    setEditingInvoiceId(invoice.id);
 
-  const handleSelectStockItem = (item) => {
-    setSelectedStockItem(item);
-    setItemSearch(item.name);
-    setNewItemRate(item.price || "");
-    setShowDropdown(false);
+    setCustomer(invoice.customer);
+    setPaymentMode(invoice.paymentMode);
+    setNewItems(invoice.newItems || []);
+    setOldItems(invoice.oldItems || []);
+    setDiscount(invoice.discount || "");
+    setReceivedAmount(invoice.receivedAmount || "");
+
+    setIsModalOpen(true);
   };
 
   const handleAddNewItem = (e) => {
     e.preventDefault();
-    if (
-      !selectedStockItem ||
-      !newItemWeight ||
-      !newItemRate ||
-      !newItemMakingCharge
-    ) {
-      alert("Please fill all mandatory product fields.");
-      return;
-    }
-    if (Number(newItemWeight) > selectedStockItem.stock) {
-      alert(`Insufficient Stock! Only ${selectedStockItem.stock}g available.`);
+
+    if (!itemName || !itemWeight || !itemRate || !itemMaking) {
+      alert("Please fill all product fields.");
       return;
     }
 
-    const weight = Number(newItemWeight);
-    const rate = Number(newItemRate);
-    const making = Number(newItemMakingCharge);
+    const weight = Number(itemWeight);
+    const rate = Number(itemRate);
+    const making = Number(itemMaking);
+
     const amount = (rate + making) * weight;
 
     const newItem = {
-      ...selectedStockItem,
+      id: Date.now().toString(),
+      name: itemName,
       weight,
       rate,
       makingCharge: making,
-      hsn: newItemHsn,
-      huc: newItemHuc,
+      hsn: itemHsn,
+      huc: itemHuc,
       amount,
     };
 
-    setNewItems([...newItems, newItem]);
-    setSelectedStockItem(null);
-    setItemSearch("");
-    setNewItemWeight("");
-    setNewItemRate("");
-    setNewItemMakingCharge("");
-    setNewItemHsn("7113");
-    setNewItemHuc("");
-    setShowDropdown(false);
+    setNewItems((prev) => [...prev, newItem]);
+
+    // Reset fields
+    setItemName("");
+    setProductQuery("");
+    setItemHsn("7113");
+    setItemHuc("");
+    setItemWeight("");
+    setItemRate("");
+    setItemMaking("");
+    setSuggestions([]);
+    setShowSuggestions(false);
   };
 
   const handleRemoveNewItem = (index) => {
-    setNewItems(newItems.filter((_, i) => i !== index));
+    setNewItems((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleAddOldItem = (e) => {
     e.preventDefault();
+
     if (!oldItemName || !oldItemWeight || !oldItemRate) {
-      alert("Please fill all exchange item details.");
+      alert("Please fill old product fields.");
       return;
     }
-    setOldItems([
-      ...oldItems,
-      {
-        name: oldItemName,
-        weight: Number(oldItemWeight),
-        rate: Number(oldItemRate),
-        amount: Number(oldItemWeight) * Number(oldItemRate),
-      },
-    ]);
+
+    const weight = Number(oldItemWeight);
+    const rate = Number(oldItemRate);
+    const amount = weight * rate;
+
+    const oldItem = {
+      id: Date.now().toString(),
+      name: oldItemName,
+      weight,
+      rate,
+      amount,
+    };
+
+    setOldItems((prev) => [...prev, oldItem]);
+
+    // Reset old fields
     setOldItemName("");
     setOldItemWeight("");
     setOldItemRate("");
   };
 
   const handleRemoveOldItem = (index) => {
-    setOldItems(oldItems.filter((_, i) => i !== index));
+    setOldItems((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // --- Save Handler (Create or Update) ---
   const handleSaveInvoice = () => {
     if (!customer.name || newItems.length === 0) {
       alert("Customer Name and at least one Item are required.");
       return;
     }
-    const nextId = invoices.length
-      ? Math.max(...invoices.map((inv) => parseInt(inv.id.split("-")[1]))) + 1
-      : 1001;
 
-    const newInvoice = {
-      id: `INV-${nextId}`,
-      date: new Date().toISOString().split("T")[0],
-      customer,
-      paymentMode,
-      newItems,
-      oldItems,
-      discount: Number(discount || 0),
-      receivedAmount: Number(receivedAmount || 0),
-      balanceDue,
-      subTotal,
-      oldItemTotal: oldItemsTotal, // FIXED: This matches the variable name 'oldItemsTotal' defined above
-      taxableAmount,
-      sgst,
-      cgst,
-      grandTotal,
-    };
-    setInvoices([newInvoice, ...invoices]);
+    if (editingInvoiceId) {
+      // UPDATE EXISTING INVOICE
+      const updatedInvoices = invoices.map((inv) =>
+        inv.id === editingInvoiceId
+          ? {
+              ...inv,
+              customer,
+              paymentMode,
+              newItems,
+              oldItems,
+              discount: Number(discount || 0),
+              receivedAmount: Number(receivedAmount || 0),
+              balanceDue,
+              subTotal,
+              oldItemTotal: oldItemsTotal,
+              taxableAmount,
+              cgst,
+              sgst,
+              grandTotal,
+            }
+          : inv
+      );
 
-    const updatedStock = [...currentStock];
-    newItems.forEach((item) => {
-      const idx = updatedStock.findIndex((s) => s.id === item.id);
-      if (idx !== -1) updatedStock[idx].stock -= item.weight;
-    });
-    setCurrentStock(updatedStock);
+      setInvoices(updatedInvoices);
+    } else {
+      // CREATE NEW INVOICE
+      const nextId = invoices.length
+        ? Math.max(...invoices.map((inv) => parseInt(inv.id.split("-")[1]))) + 1
+        : 1001;
 
+      const newInvoice = {
+        id: `INV-${nextId}`,
+        date: new Date().toISOString().split("T")[0],
+        customer,
+        paymentMode,
+        newItems,
+        oldItems,
+        discount: Number(discount || 0),
+        receivedAmount: Number(receivedAmount || 0),
+        balanceDue,
+        subTotal,
+        oldItemTotal: oldItemsTotal,
+        taxableAmount,
+        sgst,
+        cgst,
+        grandTotal,
+      };
+
+      setInvoices([newInvoice, ...invoices]);
+    }
+
+    // Reset
     setIsModalOpen(false);
+    setEditingInvoiceId(null);
     setCustomer({ name: "", address: "", contact: "" });
     setNewItems([]);
     setOldItems([]);
-    setShowOldItems(false);
     setDiscount("");
     setReceivedAmount("");
   };
@@ -469,7 +518,7 @@ const Billing = () => {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(10);
         doc.setTextColor(...goldColor);
-        doc.text("OLD GOLD EXCHANGE (LESS)", 14, finalY);
+        doc.text("OLD PRODUCT EXCHANGE (LESS)", 14, finalY);
 
         autoTable(doc, {
           startY: finalY + 2,
@@ -663,7 +712,7 @@ const Billing = () => {
     "text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block";
 
   return (
-    <div className="space-y-6 font-sans text-gray-800 p-4 md:p-6">
+    <div className="space-y-6 font-sans text-gray-800 p-4 md:p-6 ">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-extrabold text-gray-900">
@@ -718,62 +767,80 @@ const Billing = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-              {filteredInvoices.slice(0, 10).map((invoice) => (
-                <tr key={invoice.id} className="hover:bg-gray-50 transition">
-                  <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
-                    {invoice.id}
-                  </td>
-                  <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
-                    <div className="font-bold">{invoice.customer.name}</div>
-                    <div className="text-xs text-gray-500">{invoice.date}</div>
-                  </td>
-                  <td className="px-6 py-4 font-bold text-gray-800 whitespace-nowrap">
-                    {formatCurrency(invoice.grandTotal)}
-                  </td>
-                  <td className="px-6 py-4 text-green-600 whitespace-nowrap">
-                    {formatCurrency(invoice.receivedAmount)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {invoice.balanceDue > 0 ? (
-                      <span className="px-2 py-1 text-xs font-bold bg-red-100 text-red-700 rounded-full flex items-center w-max">
-                        <AlertCircle size={12} className="mr-1" /> Baaki:{" "}
-                        {formatCurrency(invoice.balanceDue)}
-                      </span>
-                    ) : (
-                      <span className="px-2 py-1 text-xs font-bold bg-green-100 text-green-700 rounded-full flex items-center w-max">
-                        <CheckCircle size={12} className="mr-1" /> Paid
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap flex justify-end gap-2">
-                    <button
-                      onClick={() => generatePDF(invoice, "view")}
-                      disabled={loadingInvoiceId === invoice.id}
-                      className="text-gray-500 hover:text-blue-600 p-2"
-                    >
-                      <Eye size={18} />
-                    </button>
-                    <button
-                      onClick={() => generatePDF(invoice, "print")}
-                      disabled={loadingInvoiceId === invoice.id}
-                      className="text-gray-500 hover:text-gray-800 p-2"
-                    >
-                      <Printer size={18} />
-                    </button>
-                    <button
-                      onClick={() => generatePDF(invoice, "download")}
-                      disabled={loadingInvoiceId === invoice.id}
-                      className="text-gray-500 hover:text-yellow-600 p-2"
-                    >
-                      {loadingInvoiceId === invoice.id ? (
-                        <Loader2 size={18} className="animate-spin" />
-                      ) : (
-                        <Download size={18} />
-                      )}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+  {filteredInvoices.slice(0, 10).map((invoice) => (
+    <tr key={invoice.id} className="hover:bg-gray-50 transition">
+      
+      <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
+        {invoice.id}
+      </td>
+
+      <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
+        <div className="font-bold">{invoice.customer.name}</div>
+        <div className="text-xs text-gray-500">{invoice.date}</div>
+      </td>
+
+      <td className="px-6 py-4 font-bold text-gray-800 whitespace-nowrap">
+        {formatCurrency(invoice.grandTotal)}
+      </td>
+
+      <td className="px-6 py-4 text-green-600 whitespace-nowrap">
+        {formatCurrency(invoice.receivedAmount)}
+      </td>
+
+      <td className="px-6 py-4 whitespace-nowrap">
+        {invoice.balanceDue > 0 ? (
+          <span className="px-2 py-1 text-xs font-bold bg-red-100 text-red-700 rounded-full flex items-center w-max">
+            <AlertCircle size={12} className="mr-1" /> Baaki:{" "}
+            {formatCurrency(invoice.balanceDue)}
+          </span>
+        ) : (
+          <span className="px-2 py-1 text-xs font-bold bg-green-100 text-green-700 rounded-full flex items-center w-max">
+            <CheckCircle size={12} className="mr-1" /> Paid
+          </span>
+        )}
+      </td>
+
+      {/* --- Action Buttons --- */}
+      <td className="px-6 py-4 text-right whitespace-nowrap flex justify-end gap-2">
+
+        {/* EDIT BUTTON 🚀 */}
+        <button
+          onClick={() => handleEditInvoice(invoice)}
+          className="text-gray-500 hover:text-purple-600 p-2"
+        >
+          <Pencil size={18} />
+        </button>
+
+        <button
+          onClick={() => generatePDF(invoice, "view")}
+          disabled={loadingInvoiceId === invoice.id}
+          className="text-gray-500 hover:text-blue-600 p-2"
+        >
+          <Eye size={18} />
+        </button>
+
+        <button
+          onClick={() => generatePDF(invoice, "print")}
+          disabled={loadingInvoiceId === invoice.id}
+          className="text-gray-500 hover:text-gray-800 p-2"
+        >
+          <Printer size={18} />
+        </button>
+
+        <button
+          onClick={() => generatePDF(invoice, "download")}
+          disabled={loadingInvoiceId === invoice.id}
+          className="text-gray-500 hover:text-yellow-600 p-2"
+        >
+          {loadingInvoiceId === invoice.id ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : (
+            <Download size={18} />
+          )}
+        </button>
+      </td>
+    </tr>
+  ))}
             </tbody>
           </table>
         </div>
@@ -855,86 +922,102 @@ const Billing = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Add Products Section */}
               <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
                 <h4 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
                   Add Products
                 </h4>
+
                 <form
                   onSubmit={handleAddNewItem}
                   className="grid grid-cols-2 md:grid-cols-12 gap-4 items-end bg-gray-50 p-4 rounded-lg border border-gray-200"
                 >
-                  <div
-                    className="col-span-2 md:col-span-3 relative"
-                    ref={dropdownRef}
-                  >
+                  {/* Product Name with searchable suggestions */}
+                  <div className="col-span-2 md:col-span-3 relative" ref={suggestionsRef}>
                     <label className={labelStyle}>Product Name</label>
                     <input
                       type="text"
                       className={inputStyle}
-                      placeholder="Search Stock..."
-                      value={itemSearch}
-                      onChange={handleSearchChange}
-                      onFocus={() => setShowDropdown(true)}
+                      value={productQuery || itemName}
+                      onChange={(e) => {
+                        setProductQuery(e.target.value);
+                        setItemName(e.target.value);
+                      }}
+                      onFocus={() => {
+                        if (productQuery) setShowSuggestions(true);
+                      }}
+                      placeholder="Type product name..."
                     />
-                    {showDropdown && availableStock.length > 0 && (
-                      <div className="absolute top-full left-0 z-20 w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-1 max-h-40 overflow-y-auto">
-                        {availableStock.map((item) => (
-                          <div
-                            key={item.id}
-                            className="px-4 py-2 hover:bg-yellow-50 cursor-pointer text-sm border-b last:border-0"
-                            onClick={() => handleSelectStockItem(item)}
+                    {showSuggestions && suggestions.length > 0 && (
+                      <ul className="absolute z-50 mt-1 w-full bg-white rounded-md shadow-lg max-h-44 overflow-auto border border-gray-200">
+                        {suggestions.map((s, i) => (
+                          <li
+                            key={i}
+                            className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                            onClick={() => {
+                              setItemName(s);
+                              setProductQuery(s);
+                              setShowSuggestions(false);
+                            }}
                           >
-                            {item.name} ({item.stock}g)
-                          </div>
+                            {s}
+                          </li>
                         ))}
-                      </div>
+                      </ul>
                     )}
                   </div>
+
                   <div className="col-span-1">
                     <label className={labelStyle}>HSN Code</label>
                     <input
                       type="text"
                       className={inputStyle}
-                      value={newItemHsn}
-                      onChange={(e) => setNewItemHsn(e.target.value)}
+                      value={itemHsn}
+                      onChange={(e) => setItemHsn(e.target.value)}
                     />
                   </div>
+
                   <div className="col-span-1 md:col-span-2">
                     <label className={labelStyle}>HUC ID</label>
                     <input
                       type="text"
                       className={inputStyle}
-                      value={newItemHuc}
-                      onChange={(e) => setNewItemHuc(e.target.value)}
+                      value={itemHuc}
+                      onChange={(e) => setItemHuc(e.target.value)}
                     />
                   </div>
+
                   <div className="col-span-1">
                     <label className={labelStyle}>Weight (g)</label>
                     <input
                       type="number"
                       className={inputStyle}
-                      value={newItemWeight}
-                      onChange={(e) => setNewItemWeight(e.target.value)}
+                      value={itemWeight}
+                      onChange={(e) => setItemWeight(e.target.value)}
                     />
                   </div>
+
                   <div className="col-span-1 md:col-span-2">
                     <label className={labelStyle}>Rate/g</label>
                     <input
                       type="number"
                       className={inputStyle}
-                      value={newItemRate}
-                      onChange={(e) => setNewItemRate(e.target.value)}
+                      value={itemRate}
+                      onChange={(e) => setItemRate(e.target.value)}
                     />
                   </div>
+
                   <div className="col-span-2 md:col-span-2">
                     <label className={labelStyle}>Making/g</label>
                     <input
                       type="number"
                       className={inputStyle}
-                      value={newItemMakingCharge}
-                      onChange={(e) => setNewItemMakingCharge(e.target.value)}
+                      value={itemMaking}
+                      onChange={(e) => setItemMaking(e.target.value)}
                     />
                   </div>
+
                   <div className="col-span-2 md:col-span-1">
                     <button
                       type="submit"
@@ -944,6 +1027,7 @@ const Billing = () => {
                     </button>
                   </div>
                 </form>
+
                 {newItems.length > 0 && (
                   <div className="mt-4 border rounded-lg overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -960,18 +1044,10 @@ const Billing = () => {
                       <tbody className="divide-y divide-gray-100">
                         {newItems.map((item, idx) => (
                           <tr key={idx}>
-                            <td className="px-4 py-2 font-medium">
-                              {item.name}
-                            </td>
-                            <td className="px-4 py-2 text-right">
-                              {item.weight}
-                            </td>
-                            <td className="px-4 py-2 text-right">
-                              {item.rate}
-                            </td>
-                            <td className="px-4 py-2 text-right">
-                              {item.makingCharge}
-                            </td>
+                            <td className="px-4 py-2 font-medium">{item.name}</td>
+                            <td className="px-4 py-2 text-right">{item.weight}</td>
+                            <td className="px-4 py-2 text-right">{item.rate}</td>
+                            <td className="px-4 py-2 text-right">{item.makingCharge}</td>
                             <td className="px-4 py-2 text-right font-bold">
                               {formatCurrency(item.amount)}
                             </td>
@@ -990,6 +1066,8 @@ const Billing = () => {
                   </div>
                 )}
               </div>
+
+              {/* Old Items / Exchange */}
               <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
                 <div
                   className="flex items-center mb-4 cursor-pointer"
@@ -1001,7 +1079,7 @@ const Billing = () => {
                     <div className="w-5 h-5 border-2 border-gray-300 rounded mr-2"></div>
                   )}
                   <span className="font-bold text-gray-700">
-                    Include Old Gold Exchange (Less)
+                    Include Old Product Exchange
                   </span>
                 </div>
                 {showOldItems && (
@@ -1068,80 +1146,82 @@ const Billing = () => {
                   </div>
                 )}
               </div>
-            </div>
-            <div className="bg-white p-4 md:p-6 border-t">
-              <div className="flex flex-col md:flex-row justify-between items-end gap-6">
-                <div className="w-full md:w-1/2 grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelStyle}>Discount (Rs.)</label>
-                    <input
-                      type="number"
-                      className={inputStyle}
-                      placeholder="0"
-                      value={discount}
-                      onChange={(e) => setDiscount(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelStyle}>Received Amount (Rs.)</label>
-                    <input
-                      type="number"
-                      className={`${inputStyle} border-green-400 bg-green-50`}
-                      placeholder="0"
-                      value={receivedAmount}
-                      onChange={(e) => setReceivedAmount(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="w-full md:w-1/3 space-y-2 text-right">
-                  <div className="flex justify-between text-gray-600 text-sm">
-                    <span>Subtotal:</span>{" "}
-                    <span>{formatCurrency(subTotal)}</span>
-                  </div>
-                  {Number(discount) > 0 && (
-                    <div className="flex justify-between text-red-500 text-sm">
-                      <span>Discount:</span>{" "}
-                      <span>- {formatCurrency(discount)}</span>
+
+              {/* SUMMARY & ACTIONS */}
+              <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
+                <div className="flex flex-col md:flex-row justify-between items-end gap-6">
+                  <div className="w-full md:w-1/2 grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelStyle}>Discount (Rs.)</label>
+                      <input
+                        type="number"
+                        className={inputStyle}
+                        placeholder="0"
+                        value={discount}
+                        onChange={(e) => setDiscount(e.target.value)}
+                      />
                     </div>
-                  )}
-                  <div className="flex justify-between text-gray-500 text-xs">
-                    <span>Tax (18%):</span>{" "}
-                    <span>{formatCurrency(cgst + sgst)}</span>
+                    <div>
+                      <label className={labelStyle}>Received Amount (Rs.)</label>
+                      <input
+                        type="number"
+                        className={`${inputStyle} border-green-400 bg-green-50`}
+                        placeholder="0"
+                        value={receivedAmount}
+                        onChange={(e) => setReceivedAmount(e.target.value)}
+                      />
+                    </div>
                   </div>
-                  <div className="h-px bg-gray-200 my-1"></div>
-                  <div className="flex justify-between text-xl font-bold text-gray-800">
-                    <span>Grand Total:</span>{" "}
-                    <span>{formatCurrency(grandTotal)}</span>
-                  </div>
-                  <div
-                    className={`flex justify-between items-center p-3 rounded-lg mt-2 ${
-                      balanceDue > 0
-                        ? "bg-red-100 text-red-800"
-                        : "bg-green-100 text-green-800"
-                    }`}
-                  >
-                    <span className="font-bold text-sm">
-                      {balanceDue > 0 ? "Balance Due (Baaki):" : "Fully Paid:"}
-                    </span>
-                    <span className="font-bold text-lg">
-                      {formatCurrency(balanceDue > 0 ? balanceDue : 0)}
-                    </span>
+                  <div className="w-full md:w-1/3 space-y-2 text-right">
+                    <div className="flex justify-between text-gray-600 text-sm">
+                      <span>Subtotal:</span>{" "}
+                      <span>{formatCurrency(subTotal)}</span>
+                    </div>
+                    {Number(discount) > 0 && (
+                      <div className="flex justify-between text-red-500 text-sm">
+                        <span>Discount:</span>{" "}
+                        <span>- {formatCurrency(discount)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-gray-500 text-xs">
+                      <span>Tax (18%):</span>{" "}
+                      <span>{formatCurrency(cgst + sgst)}</span>
+                    </div>
+                    <div className="h-px bg-gray-200 my-1"></div>
+                    <div className="flex justify-between text-xl font-bold text-gray-800">
+                      <span>Grand Total:</span>{" "}
+                      <span>{formatCurrency(grandTotal)}</span>
+                    </div>
+                    <div
+                      className={`flex justify-between items-center p-3 rounded-lg mt-2 ${
+                        balanceDue > 0
+                          ? "bg-red-100 text-red-800"
+                          : "bg-green-100 text-green-800"
+                      }`}
+                    >
+                      <span className="font-bold text-sm">
+                        {balanceDue > 0 ? "Balance Due (Baaki):" : "Fully Paid:"}
+                      </span>
+                      <span className="font-bold text-lg">
+                        {formatCurrency(balanceDue > 0 ? balanceDue : 0)}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="mt-6 flex gap-4 justify-end">
-                <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-6 py-3 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveInvoice}
-                  className={`${btnPrimary} px-8 text-lg shadow-xl`}
-                >
-                  Save & Generate
-                </button>
+                <div className="mt-6 flex gap-4 justify-end pb-10">
+                  <button
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-6 py-3 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveInvoice}
+                    className={`${btnPrimary} px-8 text-lg shadow-xl`}
+                  >
+                    Save & Generate
+                  </button>
+                </div>
               </div>
             </div>
           </div>

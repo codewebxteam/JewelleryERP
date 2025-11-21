@@ -10,22 +10,25 @@ import {
   Watch,
 } from "lucide-react";
 
-// --- Stats Cards ---
+/* -----------------------------------------
+   📌 1. STATS CARDS
+----------------------------------------- */
 export const statsCardsData = [
   {
     title: "Today's Sales",
-    value: "₹1,42,500",
+    value: "₹14,250",
     change: "+12.5%",
     changeType: "positive",
     icon: <Wallet size={24} className="text-brand-gold" />,
   },
   {
-    title: "Weekly Revenue",
-    value: "₹8,15,000",
-    change: "+5.2%",
+    title: "Monthly Revenues",
+    value: "₹32,40,000",
+    change: "+8.2%",
     changeType: "positive",
     icon: <Banknote size={24} className="text-green-600" />,
   },
+  
   {
     title: "Pending Payments",
     value: "₹45,200",
@@ -42,33 +45,61 @@ export const statsCardsData = [
   },
 ];
 
-export const salesDataLineChart = [
-  { name: "Mon", sales: 12000 },
-  { name: "Tue", sales: 19000 },
-  { name: "Wed", sales: 15000 },
-  { name: "Thu", sales: 22000 },
-  { name: "Fri", sales: 28000 },
-  { name: "Sat", sales: 35000 },
-  { name: "Sun", sales: 42000 },
+/* -----------------------------------------
+   📌 2. MONTHLY SALES DATA (Updated)
+----------------------------------------- */
+export const monthlySalesData = [
+  { month: "Jan", sales: 120000 },
+  { month: "Feb", sales: 150000 },
+  { month: "Mar", sales: 180000 },
+  { month: "Apr", sales: 220000 },
+  { month: "May", sales: 240000 },
+  { month: "Jun", sales: 260000 },
+  { month: "Jul", sales: 280000 },
+  { month: "Aug", sales: 310000 },
+  { month: "Sep", sales: 300000 },
+  { month: "Oct", sales: 330000 },
+  { month: "Nov", sales: 350000 },
+  { month: "Dec", sales: 370000 },
 ];
 
+/* -----------------------------------------
+   📌 3. TOP SELLING PRODUCTS (STOCK → grams)
+----------------------------------------- */
 export const topSellingProducts = [
   {
     id: 1,
     name: "Gold Ring",
     sold: 25,
-    stock: 100,
+    grams: 100, // Updated
     icon: <Gem size={20} className="text-gray-500" />,
   },
   {
     id: 2,
     name: "Gold Chain",
     sold: 18,
-    stock: 500,
+    grams: 500, // Updated
+    icon: <Link size={20} className="text-gray-500" />,
+  },
+  {
+    id: 2,
+    name: "Gold Chain",
+    sold: 18,
+    grams: 500, // Updated
+    icon: <Link size={20} className="text-gray-500" />,
+  },
+  {
+    id: 2,
+    name: "Gold Chain",
+    sold: 18,
+    grams: 500, // Updated
     icon: <Link size={20} className="text-gray-500" />,
   },
 ];
 
+/* -----------------------------------------
+   📌 4. RECENT TRANSACTIONS
+----------------------------------------- */
 export const recentTransactions = [
   {
     id: "INV-1001",
@@ -84,6 +115,9 @@ export const recentTransactions = [
   },
 ];
 
+/* -----------------------------------------
+   📌 5. GIRWI DATA
+----------------------------------------- */
 export const girwiData = [
   {
     id: "G-1001",
@@ -96,82 +130,45 @@ export const girwiData = [
   },
 ];
 
-// --- STOCK DATA (Updated as per request) ---
+/* -----------------------------------------
+   📌 6. STOCK DATA (Updated to grams)
+----------------------------------------- */
 export const stockData = [
   {
     id: "SKU-001",
     name: "Gold Ring",
     category: "Ring",
-    stock: 100.0,
-    weight: 0,
+    grams: 100.0,
     price: 7200,
   },
   {
     id: "SKU-002",
     name: "Gold Chain",
     category: "Chain",
-    stock: 500.0,
-    weight: 0,
+    grams: 500.0,
     price: 7200,
   },
   {
     id: "SKU-003",
     name: "Diamond Necklace",
     category: "Necklace",
-    stock: 150.0,
-    weight: 0,
+    grams: 150.0,
     price: 65000,
   },
   {
     id: "SKU-004",
     name: "Silver Anklet",
     category: "Anklet",
-    stock: 1000.0,
-    weight: 0,
+    grams: 1000.0,
     price: 85,
   },
   {
     id: "SKU-005",
     name: "Gold Bangle",
     category: "Bangle",
-    stock: 250.0,
-    weight: 0,
+    grams: 250.0,
     price: 7200,
   },
 ];
 
-// --- Invoice History ---
-export const invoiceHistory = [
-  {
-    id: "INV-1001",
-    date: "2025-11-15",
-    customer: {
-      name: "Rohan Sharma",
-      address: "Flat 101, MG Road, Mumbai",
-      contact: "9876543210",
-    },
-    paymentMode: "Cash",
-    newItems: [
-      {
-        id: "SKU-001",
-        name: "Gold Ring",
-        weight: 5.2,
-        rate: 7200,
-        makingCharge: 500,
-        hsn: "7113",
-        huc: "HD12345",
-        amount: 5.2 * (7200 + 500),
-      },
-    ],
-    oldItems: [],
-    subTotal: 40040,
-    discount: 40,
-    oldItemTotal: 0,
-    taxableAmount: 40000,
-    sgst: 1200,
-    cgst: 1200,
-    grandTotal: 42400,
-    receivedAmount: 42400,
-    balanceDue: 0,
-  },
-];
+

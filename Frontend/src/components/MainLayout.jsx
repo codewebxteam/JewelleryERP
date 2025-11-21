@@ -1,17 +1,33 @@
 import React from "react";
-import Header from "./Header";
+import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
-import { Outlet } from "react-router-dom"; // Outlet renders the current page
+import Header from "./Header";
 
 const MainLayout = () => {
   return (
-    <div className="flex h-screen bg-gray-100">
-      <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex w-full overflow-hidden">
+
+      {/* Desktop Sidebar */}
+      <div className="hidden md:block w-64 flex-shrink-0">
+        <Sidebar />
+      </div>
+
+      {/* MAIN CONTAINER */}
+      <div className="flex-1 min-h-screen bg-gray-100 flex flex-col overflow-hidden">
+
+        {/* HEADER */}
         <Header />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
-          <Outlet /> {/* This is where your pages will be rendered */}
+
+        {/* PAGE CONTENT */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5">
+          <Outlet />
         </main>
+
+      </div>
+
+      {/* Mobile Bottom Nav */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50">
+        <Sidebar />
       </div>
     </div>
   );
