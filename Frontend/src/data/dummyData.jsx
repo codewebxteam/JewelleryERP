@@ -82,14 +82,14 @@ export const topSellingProducts = [
     icon: <Link size={20} className="text-gray-500" />,
   },
   {
-    id: 2,
+    id: 3,
     name: "Gold Chain",
     sold: 18,
     grams: 500, // Updated
     icon: <Link size={20} className="text-gray-500" />,
   },
   {
-    id: 2,
+    id: 4,
     name: "Gold Chain",
     sold: 18,
     grams: 500, // Updated
