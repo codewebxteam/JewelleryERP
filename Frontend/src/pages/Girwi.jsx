@@ -355,7 +355,7 @@ export default function GirviPage() {
 
                         <button
                             onClick={() => setShowForm(false)}
-                            className="mt-4 bg-red-500 text-white p-2 w-full rounded-lg hover:bg-red-600 transition"
+                            className="mt-4 mb-8 bg-red-500 text-white p-2 w-full rounded-lg hover:bg-red-600 transition"
                         >
                             Close
                         </button>
