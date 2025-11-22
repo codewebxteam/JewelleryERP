@@ -98,7 +98,7 @@ const Billing = () => {
   // Load invoices from localStorage
   const loadInvoices = () => {
     const stored = localStorage.getItem("invoices");
-    return stored ? JSON.parse(stored) : invoiceHistory;
+    return stored ? JSON.parse(stored) :[];
   };
 
   const [invoices, setInvoices] = useState(loadInvoices());
