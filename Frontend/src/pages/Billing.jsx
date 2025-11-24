@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import {  stockData } from "../data/dummyData.jsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import logoImg from "../assets/logo.png";
@@ -89,7 +88,7 @@ const numberToWords = (num) => {
   str +=
     n[5] != 0
       ? (str !== "" ? "and " : "") +
-        (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]])
+      (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]])
       : "";
   return str + "Only";
 };
@@ -98,15 +97,10 @@ const Billing = () => {
   // Load invoices from localStorage
   const loadInvoices = () => {
     const stored = localStorage.getItem("invoices");
-    return stored ? JSON.parse(stored) :[];
+    return stored ? JSON.parse(stored) : [];
   };
 
   const [invoices, setInvoices] = useState(loadInvoices());
-
-  // Save invoices to localStorage whenever updated
-  useEffect(() => {
-    localStorage.setItem("invoices", JSON.stringify(invoices));
-  }, [invoices]);
 
   // --- Main State ---
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -115,6 +109,26 @@ const Billing = () => {
 
   // NEW: Track invoice being edited
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
+
+  // Load stock from localStorage (for suggestions + auto-fill)
+  const [stockInventory, setStockInventory] = useState([]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("jewellery_stock");
+      setStockInventory(stored ? JSON.parse(stored) : []);
+    } catch {
+      setStockInventory([]);
+    }
+  }, []); // jab modal open hoga, fresh stock load hoga
+
+
+  // Save invoices to localStorage whenever updated
+  useEffect(() => {
+    localStorage.setItem("invoices", JSON.stringify(invoices));
+  }, [invoices]);
+
+
 
   // --- Invoice Form State ---
   const [customer, setCustomer] = useState({
@@ -164,14 +178,15 @@ const Billing = () => {
       return;
     }
     const q = productQuery.toLowerCase();
-    const filtered = stockData
-      .map((s) => s.name)
-      .filter((name, idx, arr) => arr.indexOf(name) === idx) // unique names
-      .filter((name) => name.toLowerCase().includes(q))
+
+    const filtered = stockInventory
+      .filter((item) => item.name && item.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name)) // A-Z by name
       .slice(0, 6);
+
     setSuggestions(filtered);
     setShowSuggestions(true);
-  }, [productQuery]);
+  }, [productQuery, stockInventory]);
 
   // --- Financial Calculations ---
   const newItemsTotal = useMemo(
@@ -206,6 +221,18 @@ const Billing = () => {
     return due > 0 ? due : 0;
   }, [grandTotal, receivedAmount]);
 
+  const selectedStockItem = useMemo(
+    () =>
+      stockInventory.find(
+        (s) =>
+          s.name === itemName &&
+          (s.hsnCode || "") === (itemHsn || "") &&
+          (s.huid || "") === (itemHuc || "")
+      ),
+    [stockInventory, itemName, itemHsn, itemHuc]
+  );
+
+
   // --- Edit Invoice Handler ---
   const handleEditInvoice = (invoice) => {
     setEditingInvoiceId(invoice.id);
@@ -232,6 +259,17 @@ const Billing = () => {
     const rate = Number(itemRate);
     const making = Number(itemMaking);
 
+    // 🛑 NEW STOCK VALIDATION
+    if (selectedStockItem) {
+      const currentStock = Number(selectedStockItem.totalWeight || 0);
+
+      if (weight > currentStock) {
+        alert(`Stock is low! Only ${currentStock}g available. Please enter lower weight.`);
+        setItemWeight(""); // reset field for correct value
+        return;
+      }
+    }
+
     const amount = (rate + making) * weight;
 
     const newItem = {
@@ -247,7 +285,7 @@ const Billing = () => {
 
     setNewItems((prev) => [...prev, newItem]);
 
-    // Reset fields
+    // Reset input fields
     setItemName("");
     setProductQuery("");
     setItemHsn("7113");
@@ -258,6 +296,7 @@ const Billing = () => {
     setSuggestions([]);
     setShowSuggestions(false);
   };
+
 
   const handleRemoveNewItem = (index) => {
     setNewItems((prev) => prev.filter((_, i) => i !== index));
@@ -295,6 +334,52 @@ const Billing = () => {
     setOldItems((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // 🔥 UPDATE STOCK FROM INVOICE (only for new invoice, not edit)
+  const updateStockFromInvoice = (invoice) => {
+    try {
+      const stored = localStorage.getItem("jewellery_stock");
+      if (!stored) return;
+      let stockList = JSON.parse(stored) || [];
+
+      const updated = stockList.map((item) => ({ ...item }));
+
+      invoice.newItems.forEach((sold) => {
+        const index = updated.findIndex(
+          (s) =>
+            s.name === sold.name &&
+            (s.hsnCode || "") === (sold.hsn || "") &&
+            (s.huid || "") === (sold.huc || "")
+        );
+        if (index === -1) return;
+
+        const stockItem = updated[index];
+        const soldWeight = Number(sold.weight || 0);
+        if (!soldWeight || soldWeight <= 0) return;
+
+        const currentTotal = Number(stockItem.totalWeight || 0);
+        const perPieceWeight = Number(stockItem.weight || 0);
+
+        let newTotal = Number((currentTotal - soldWeight).toFixed(2));
+        if (newTotal < 0) newTotal = 0;
+
+        let newQty = stockItem.quantity;
+        if (perPieceWeight > 0) {
+          newQty = Number((newTotal / perPieceWeight).toFixed(2));
+        }
+
+        updated[index] = {
+          ...stockItem,
+          totalWeight: newTotal,
+          quantity: newTotal <= 0 ? 0 : newQty,
+        };
+      });
+
+      localStorage.setItem("jewellery_stock", JSON.stringify(updated));
+    } catch (err) {
+      console.error("Stock update error:", err);
+    }
+  };
+
   // --- Save Handler (Create or Update) ---
   const handleSaveInvoice = () => {
     if (!customer.name || newItems.length === 0) {
@@ -303,25 +388,25 @@ const Billing = () => {
     }
 
     if (editingInvoiceId) {
-      // UPDATE EXISTING INVOICE
+      // UPDATE EXISTING INVOICE (no stock change to avoid double adjustment)
       const updatedInvoices = invoices.map((inv) =>
         inv.id === editingInvoiceId
           ? {
-              ...inv,
-              customer,
-              paymentMode,
-              newItems,
-              oldItems,
-              discount: Number(discount || 0),
-              receivedAmount: Number(receivedAmount || 0),
-              balanceDue,
-              subTotal,
-              oldItemTotal: oldItemsTotal,
-              taxableAmount,
-              cgst,
-              sgst,
-              grandTotal,
-            }
+            ...inv,
+            customer,
+            paymentMode,
+            newItems,
+            oldItems,
+            discount: Number(discount || 0),
+            receivedAmount: Number(receivedAmount || 0),
+            balanceDue,
+            subTotal,
+            oldItemTotal: oldItemsTotal,
+            taxableAmount,
+            cgst,
+            sgst,
+            grandTotal,
+          }
           : inv
       );
 
@@ -351,6 +436,9 @@ const Billing = () => {
       };
 
       setInvoices([newInvoice, ...invoices]);
+
+      // ✅ Reduce stock based on this invoice
+      updateStockFromInvoice(newInvoice);
     }
 
     // Reset
@@ -712,14 +800,14 @@ const Billing = () => {
     "text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block";
 
   return (
-    <div className="space-y-6 font-sans text-gray-800 p-4 md:p-6 ">
+    <div className="space-y-6 p-4 sm:px-4 md:px-6 lg:px-4 pb-24">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-extrabold text-gray-900">
             Billing & Invoices
           </h2>
           <p className="text-gray-500 text-sm">
-            Create professional invoices with gold stock management.
+            Create professional invoices from stock management.
           </p>
         </div>
         <button
@@ -767,80 +855,80 @@ const Billing = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-  {filteredInvoices.slice(0, 10).map((invoice) => (
-    <tr key={invoice.id} className="hover:bg-gray-50 transition">
-      
-      <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
-        {invoice.id}
-      </td>
+              {filteredInvoices.slice(0, 10).map((invoice) => (
+                <tr key={invoice.id} className="hover:bg-gray-50 transition">
 
-      <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
-        <div className="font-bold">{invoice.customer.name}</div>
-        <div className="text-xs text-gray-500">{invoice.date}</div>
-      </td>
+                  <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
+                    {invoice.id}
+                  </td>
 
-      <td className="px-6 py-4 font-bold text-gray-800 whitespace-nowrap">
-        {formatCurrency(invoice.grandTotal)}
-      </td>
+                  <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
+                    <div className="font-bold">{invoice.customer.name}</div>
+                    <div className="text-xs text-gray-500">{invoice.date}</div>
+                  </td>
 
-      <td className="px-6 py-4 text-green-600 whitespace-nowrap">
-        {formatCurrency(invoice.receivedAmount)}
-      </td>
+                  <td className="px-6 py-4 font-bold text-gray-800 whitespace-nowrap">
+                    {formatCurrency(invoice.grandTotal)}
+                  </td>
 
-      <td className="px-6 py-4 whitespace-nowrap">
-        {invoice.balanceDue > 0 ? (
-          <span className="px-2 py-1 text-xs font-bold bg-red-100 text-red-700 rounded-full flex items-center w-max">
-            <AlertCircle size={12} className="mr-1" /> Baaki:{" "}
-            {formatCurrency(invoice.balanceDue)}
-          </span>
-        ) : (
-          <span className="px-2 py-1 text-xs font-bold bg-green-100 text-green-700 rounded-full flex items-center w-max">
-            <CheckCircle size={12} className="mr-1" /> Paid
-          </span>
-        )}
-      </td>
+                  <td className="px-6 py-4 text-green-600 whitespace-nowrap">
+                    {formatCurrency(invoice.receivedAmount)}
+                  </td>
 
-      {/* --- Action Buttons --- */}
-      <td className="px-6 py-4 text-right whitespace-nowrap flex justify-end gap-2">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {invoice.balanceDue > 0 ? (
+                      <span className="px-2 py-1 text-xs font-bold bg-red-100 text-red-700 rounded-full flex items-center w-max">
+                        <AlertCircle size={12} className="mr-1" /> Baaki:{" "}
+                        {formatCurrency(invoice.balanceDue)}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 text-xs font-bold bg-green-100 text-green-700 rounded-full flex items-center w-max">
+                        <CheckCircle size={12} className="mr-1" /> Paid
+                      </span>
+                    )}
+                  </td>
 
-        {/* EDIT BUTTON 🚀 */}
-        <button
-          onClick={() => handleEditInvoice(invoice)}
-          className="text-gray-500 hover:text-purple-600 p-2"
-        >
-          <Pencil size={18} />
-        </button>
+                  {/* --- Action Buttons --- */}
+                  <td className="px-6 py-4 text-right whitespace-nowrap flex justify-end gap-2">
 
-        <button
-          onClick={() => generatePDF(invoice, "view")}
-          disabled={loadingInvoiceId === invoice.id}
-          className="text-gray-500 hover:text-blue-600 p-2"
-        >
-          <Eye size={18} />
-        </button>
+                    {/* EDIT BUTTON 🚀 */}
+                    <button
+                      onClick={() => handleEditInvoice(invoice)}
+                      className="text-gray-500 hover:text-purple-600 p-2"
+                    >
+                      <Pencil size={18} />
+                    </button>
 
-        <button
-          onClick={() => generatePDF(invoice, "print")}
-          disabled={loadingInvoiceId === invoice.id}
-          className="text-gray-500 hover:text-gray-800 p-2"
-        >
-          <Printer size={18} />
-        </button>
+                    <button
+                      onClick={() => generatePDF(invoice, "view")}
+                      disabled={loadingInvoiceId === invoice.id}
+                      className="text-gray-500 hover:text-blue-600 p-2"
+                    >
+                      <Eye size={18} />
+                    </button>
 
-        <button
-          onClick={() => generatePDF(invoice, "download")}
-          disabled={loadingInvoiceId === invoice.id}
-          className="text-gray-500 hover:text-yellow-600 p-2"
-        >
-          {loadingInvoiceId === invoice.id ? (
-            <Loader2 size={18} className="animate-spin" />
-          ) : (
-            <Download size={18} />
-          )}
-        </button>
-      </td>
-    </tr>
-  ))}
+                    <button
+                      onClick={() => generatePDF(invoice, "print")}
+                      disabled={loadingInvoiceId === invoice.id}
+                      className="text-gray-500 hover:text-gray-800 p-2"
+                    >
+                      <Printer size={18} />
+                    </button>
+
+                    <button
+                      onClick={() => generatePDF(invoice, "download")}
+                      disabled={loadingInvoiceId === invoice.id}
+                      className="text-gray-500 hover:text-yellow-600 p-2"
+                    >
+                      {loadingInvoiceId === invoice.id ? (
+                        <Loader2 size={18} className="animate-spin" />
+                      ) : (
+                        <Download size={18} />
+                      )}
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -954,14 +1042,21 @@ const Billing = () => {
                         {suggestions.map((s, i) => (
                           <li
                             key={i}
-                            className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                            className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex justify-between"
                             onClick={() => {
-                              setItemName(s);
-                              setProductQuery(s);
+                              setItemName(s.name);
+                              setProductQuery(s.name);
+                              setItemHsn(s.hsnCode || itemHsn);
+                              setItemHuc(s.huid || "");
                               setShowSuggestions(false);
                             }}
                           >
-                            {s}
+                            <span>{s.name}</span>
+                            {s.totalWeight !== undefined && (
+                              <span className="text-xs text-gray-500">
+                                {s.totalWeight} g in stock
+                              </span>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -1193,11 +1288,10 @@ const Billing = () => {
                       <span>{formatCurrency(grandTotal)}</span>
                     </div>
                     <div
-                      className={`flex justify-between items-center p-3 rounded-lg mt-2 ${
-                        balanceDue > 0
-                          ? "bg-red-100 text-red-800"
-                          : "bg-green-100 text-green-800"
-                      }`}
+                      className={`flex justify-between items-center p-3 rounded-lg mt-2 ${balanceDue > 0
+                        ? "bg-red-100 text-red-800"
+                        : "bg-green-100 text-green-800"
+                        }`}
                     >
                       <span className="font-bold text-sm">
                         {balanceDue > 0 ? "Balance Due (Baaki):" : "Fully Paid:"}

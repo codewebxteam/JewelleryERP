@@ -1,334 +1,307 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { PieChart, Pie,Cell,Tooltip,Legend,ResponsiveContainer,} from "recharts";
-import { LineChart, Package, Database, FileX, Loader2, PieChart as PieChartIcon } from "lucide-react";
+import React, { useState, useMemo, useEffect } from "react";
+import { LineChart, Package, Database, Calendar, PieChartIcon } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from "recharts";
 
-const recentTransactions = [
-  { id: 'INV001', customerName: 'Ravi Sharma', amount: 15000, status: 'Paid', date: '2025-11-15' },
-  { id: 'INV002', customerName: 'Priya Verma', amount: 4500, status: 'Paid', date: '2025-11-16' },
-  { id: 'INV003', customerName: 'Amit Singh', amount: 8000, status: 'Pending', date: '2025-11-17' },
-  { id: 'INV004', customerName: 'Neha Gupta', amount: 2200, status: 'Paid', date: '2025-11-18' },
-  { id: 'INV005', customerName: 'Rajesh Patil', amount: 9500, status: 'Pending', date: '2025-11-19' },
-  { id: 'INV006', customerName: 'Kirti Rao', amount: 35000, status: 'Paid', date: '2025-11-20' },
-  { id: 'INV007', customerName: 'Gaurav Jain', amount: 1200, status: 'Paid', date: '2025-11-21' },
-];
+// Colors
+const COLORS = ["#FFB200", "#16A34A", "#3B82F6", "#EF4444", "#8B5CF6", "#E11D48"];
 
-const stockData = [
-  { id: 'SKU1001', name: 'Gold Necklace 22k', category: 'Necklace', stock: 15, price: 95000 },
-  { id: 'SKU1002', name: 'Diamond Ring 18k', category: 'Ring', stock: 8, price: 45000 },
-  { id: 'SKU1003', name: 'Silver Anklet', category: 'Anklet', stock: 55, price: 2500 },
-  { id: 'SKU1004', name: 'Platinum Bracelet', category: 'Bracelet', stock: 3, price: 120000 },
-  { id: 'SKU1005', name: 'Gold Earrings 14k', category: 'Earrings', stock: 22, price: 18000 },
-];
+// Load Data from LocalStorage
+const loadLocal = (key) => JSON.parse(localStorage.getItem(key) || "[]");
 
-const girwiData = [
-  { id: 'GIR001', name: 'Sunita Devi', item: 'Gold Chain', weight: 12.5, amount: 40000, date: '2025-10-01', status: 'Active' },
-  { id: 'GIR002', name: 'Ajay Kumar', item: 'Silver Coins', weight: 500, amount: 8000, date: '2025-09-10', status: 'Active' },
-  { id: 'GIR003', name: 'Deepika M', item: 'Diamond Pendant', weight: 5.2, amount: 150000, date: '2025-11-05', status: 'Closed' },
-  { id: 'GIR004', name: 'Vikas Rathi', item: 'Gold Bangles', weight: 25.0, amount: 85000, date: '2025-11-10', status: 'Active' },
-];
-
-const PIE_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#6366F1', '#EC4899'];
-
-const formatDate = (date) => date.toISOString().split("T")[0];
-
-const getThisMonthRange = () => {
-  const now = new Date();
-  const firstDay = formatDate(new Date(now.getFullYear(), now.getMonth(), 1));
-  const lastDay = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-  return { firstDay, lastDay };
-};
-
-const getChartData = (type, data) => {
-  const aggregation = {};
-
-  if (type === "sales") {
-    data.forEach(item => {
-      const status = item.status;
-      aggregation[status] = (aggregation[status] || 0) + 1;
-    });
-    return Object.keys(aggregation).map((key, index) => ({
-      name: `${key} Orders`,
-      value: aggregation[key],
-      color: PIE_COLORS[index % PIE_COLORS.length],
-    }));
-  } else if (type === "stock") {
-    data.forEach(item => {
-      const category = item.category;
-      aggregation[category] = (aggregation[category] || 0) + item.stock;
-    });
-    return Object.keys(aggregation).map((key, index) => ({
-      name: `${key} Stock`,
-      value: aggregation[key],
-      color: PIE_COLORS[index % PIE_COLORS.length],
-    }));
-  } else if (type === "girwi") {
-    data.forEach(item => {
-      const status = item.status;
-      aggregation[status] = (aggregation[status] || 0) + 1;
-    });
-    return Object.keys(aggregation).map((key, index) => ({
-      name: `${key} Girwi Deals`,
-      value: aggregation[key],
-      color: PIE_COLORS[index % PIE_COLORS.length],
-    }));
-  }
-
-  return [];
-};
-
-const ReportPieChart = ({ data, title }) => {
-  if (!data || data.length === 0) {
-    return (
-      <div className="flex justify-center items-center h-full min-h-[300px] text-gray-500 border border-dashed rounded-lg p-4">
-        No measurable data to display.
-      </div>
-    );
-  }
-
-  const CustomTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      const item = payload[0].payload;
-      return (
-        <div className="p-2 bg-white border border-gray-300 rounded-lg shadow-lg text-sm">
-          <p className="font-semibold text-gray-800">{item.name}</p>
-          <p className="text-gray-600">Value: <span className="font-bold">{item.value.toLocaleString()}</span></p>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  return (
-    <div className="h-full min-h-[350px] flex flex-col items-center p-4 bg-white rounded-lg border border-gray-200">
-      <h4 className="text-xl font-semibold mb-4 text-gray-800 flex items-center">
-        <PieChartIcon className="h-5 w-5 mr-2 text-brand-gold" />
-        {title} Breakdown
-      </h4>
-      <ResponsiveContainer width="100%" height={300}>
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            outerRadius={120}
-            fill="#8884d8"
-            labelLine={false}
-            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.color} stroke="#fff" strokeWidth={1} />
-            ))}
-          </Pie>
-          <Tooltip content={<CustomTooltip />} />
-          <Legend
-            layout="horizontal"
-            verticalAlign="bottom"
-            align="center"
-            iconType="circle"
-            wrapperStyle={{ marginTop: '10px' }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
-  );
-};
-
-const TabButton = ({ icon, isActive, onClick, children }) => (
-  <button
-    onClick={onClick}
-    className={`flex items-center space-x-2 px-4 py-3 font-semibold text-sm transition duration-150 ease-in-out border-b-2 ${isActive ? "border-brand-gold text-brand-gold"  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"  }`}>
-    {icon}
-    <span>{children}</span>
-  </button>
-);
-
-const SummaryItem = ({ label, value, color }) => (
-  <div className="p-3 bg-gray-50 rounded-lg">
-    <p className="text-sm font-medium text-gray-500">{label}</p>
-    <p className={`text-3xl font-extrabold mt-1 ${color}`}>{value}</p>
-  </div>
-);
-
-const ReportSummary = ({ summary }) => (
-  <div className="bg-white p-6 rounded-xl shadow-xl border-l-4 border-brand-gold h-full">
-    <h4 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">{summary.title}</h4>
-    <div className="space-y-4">
-      {summary.totalSales !== undefined && <SummaryItem label="Total Sales Value" value={`₹${summary.totalSales.toLocaleString()}`} color="text-brand-gold" />}
-      {summary.totalOrders !== undefined && <SummaryItem label="Total Orders Count" value={summary.totalOrders} color="text-indigo-600" />}
-      {summary.totalItems !== undefined && <SummaryItem label="Total Unique Items" value={summary.totalItems} color="text-blue-600" />}
-      {summary.totalStock !== undefined && <SummaryItem label="Total Stock Quantity" value={summary.totalStock.toLocaleString()} color="text-blue-600" />}
-      {summary.totalGirwi !== undefined && <SummaryItem label="Total Girwi Deals" value={summary.totalGirwi} color="text-purple-600" />}
-      {summary.activeGirwi !== undefined && <SummaryItem label="Active Girwi Deals" value={summary.activeGirwi} color="text-green-600" />}
-    </div>
-  </div>
-);
-
-// --- Main App ---
-const App = () => {
-  const [reportType, setReportType] = useState("sales");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [reportData, setReportData] = useState([]);
-  const [reportSummary, setReportSummary] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  const chartData = useMemo(() => getChartData(reportType, reportData), [reportType, reportData]);
-
-  const handleGenerateReport = useCallback(async (start, end, type) => {
-    setIsLoading(true);
-    setReportData([]);
-    setReportSummary(null);
-
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    let data = [];
-    let summary = {};
-
-    if (type === "sales") {
-      data = recentTransactions;
-      const totalSales = data.reduce((acc, tx) => acc + tx.amount, 0);
-      summary = {
-        title: "Sales Summary",
-        totalSales,
-        totalOrders: data.length,
-      };
-    } else if (type === "stock") {
-      data = stockData;
-      const totalStock = data.reduce((acc, item) => acc + item.stock, 0);
-      summary = {
-        title: "Stock Summary",
-        totalItems: data.length,
-        totalStock,
-      };
-    } else if (type === "girwi") {
-      data = girwiData;
-      const activeGirwi = data.filter((g) => g.status === "Active").length;
-      summary = {
-        title: "Girwi Summary",
-        totalGirwi: data.length,
-        activeGirwi,
-      };
-    }
-
-    setReportData(data);
-    setReportSummary(summary);
-    setIsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    const { firstDay, lastDay } = getThisMonthRange();
-    setStartDate(firstDay);
-    setEndDate(lastDay);
-    handleGenerateReport(firstDay, lastDay, "sales");
-  }, [handleGenerateReport]);
-
-  const onReportButtonClick = () => handleGenerateReport(startDate, endDate, reportType);
-  const onTabClick = (type) => { setReportType(type); handleGenerateReport(startDate, endDate, type); };
-
-  const renderTableHead = () => {
-    switch (reportType) {
-      case "sales": return <tr><th className="th">Invoice ID</th><th className="th">Customer</th><th className="th">Amount</th><th className="th">Status</th></tr>;
-      case "stock": return <tr><th className="th">SKU</th><th className="th">Product Name</th><th className="th">Category</th><th className="th">Stock Qty</th><th className="th">Price</th></tr>;
-      case "girwi": return <tr><th className="th">Girwi ID</th><th className="th">Customer</th><th className="th">Item</th><th className="th">Amount</th><th className="th">Date</th><th className="th">Status</th></tr>;
-      default: return null;
-    }
-  };
-
-  const renderTableBody = () => reportData.map(item => {
-    switch (reportType) {
-      case "sales":
-        return (
-          <tr key={item.id} className="hover:bg-gray-50">
-            <td className="td font-medium">{item.id}</td>
-            <td className="td">{item.customerName}</td>
-            <td className="td">₹{item.amount.toLocaleString()}</td>
-            <td className="td"><span className={`status ${item.status === "Paid" ? "status-green" : "status-yellow"}`}>{item.status}</span></td>
-          </tr>
-        );
-      case "stock":
-        return (
-          <tr key={item.id} className="hover:bg-gray-50">
-            <td className="td font-medium">{item.id}</td>
-            <td className="td">{item.name}</td>
-            <td className="td">{item.category}</td>
-            <td className="td">{item.stock}</td>
-            <td className="td">₹{item.price.toLocaleString()}</td>
-          </tr>
-        );
-      case "girwi":
-        return (
-          <tr key={item.id} className="hover:bg-gray-50">
-            <td className="td font-medium">{item.id}</td>
-            <td className="td">{item.name}</td>
-            <td className="td">{item.item} ({item.weight}g)</td>
-            <td className="td">₹{item.amount.toLocaleString()}</td>
-            <td className="td">{item.date}</td>
-            <td className="td"><span className={`status ${item.status === "Active" ? "status-green" : "status-red"}`}>{item.status}</span></td>
-          </tr>
-        );
-      default: return null;
-    }
+// Charts Data Builders
+const getSalesChartData = (list) => {
+  const grouped = {};
+  list.forEach(inv => {
+    const month = inv.date?.slice(0, 7);
+    if (!month) return;
+    grouped[month] = (grouped[month] || 0) + inv.grandTotal;
   });
 
+  return Object.keys(grouped).map((m) => ({
+    name: m,
+    value: grouped[m],
+  }));
+};
+
+const getStockChartData = (list) =>
+  list.map((s, i) => ({
+    name: s.name,
+    value: s.totalWeight || 0,
+    fill: COLORS[i % COLORS.length],
+  }));
+
+const getGirwiChartData = (list) => {
+  const active = list.filter((g) => g.status === "Active").length;
+  const closed = list.filter((g) => g.status === "Closed").length;
+  return [
+    { name: "Active", value: active, fill: "#22C55E" },
+    { name: "Closed", value: closed, fill: "#EF4444" }
+  ];
+};
+
+const Reports = () => {
+  const [reportType, setReportType] = useState("sales");
+  const [reportData, setReportData] = useState([]);
+  const [summary, setSummary] = useState({});
+
+  const loadReport = () => {
+    let sales = loadLocal("invoices");
+    let stock = loadLocal("jewellery_stock");
+    let girwi = JSON.parse(localStorage.getItem("girvi_records") || "[]");
+
+    if (reportType === "sales") {
+      setReportData(sales);
+      setSummary({
+        title: "Sales Analytics",
+        total: sales.reduce((t, i) => t + (i.grandTotal || 0), 0),
+        count: sales.length,
+      });
+    } else if (reportType === "stock") {
+      setReportData(stock);
+      setSummary({
+        title: "Stock Analytics",
+        total: stock.reduce((t, s) => t + (s.totalWeight || 0), 0),
+        count: stock.length,
+      });
+    } else {
+      setReportData(girwi);
+      setSummary({
+        title: "Girwi Analytics",
+        total: girwi.length,
+        active: girwi.filter((g) => g.status === "Active").length,
+      });
+    }
+  };
+
+  useEffect(() => loadReport(), [reportType]);
+
+  const chartData =
+    reportType === "sales"
+      ? getSalesChartData(reportData)
+      : reportType === "stock"
+        ? getStockChartData(reportData)
+        : getGirwiChartData(reportData);
+
   return (
-    <div className="space-y-6 p-4 md:p-8 bg-gray-50 min-h-screen font-sans">
-      <style jsx global>{`
-        .font-sans { font-family: 'Inter', sans-serif; }
-        .th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; color: #4B5563; text-transform: uppercase; border-bottom: 2px solid #E5E7EB; }
-        .td { padding: 8px 16px; white-space: nowrap; font-size: 14px; color: #374151; }
-        .status { padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; line-height: 1.25; display: inline-block; }
-        .status-green { background-color: #D1FAE5; color: #065F46; }
-        .status-red { background-color: #FEE2E2; color: #991B1B; }
-        .status-yellow { background-color: #FEF3C7; color: #92400E; }
-      `}</style>
+    <div className="space-y-6 p-4 sm:px-4 md:px-6 lg:px-4 pb-24">
+      {/* Header */}
+      <h2 className="text-3xl font-bold">Business Dashboard</h2>
 
-      <h2 className="text-3xl font-extrabold text-gray-900">Business Reports Dashboard</h2>
-
-      <div className="bg-white p-6 rounded-xl shadow-xl">
-        <h3 className="text-xl font-bold mb-4 border-b pb-3 text-gray-800">Report Settings</h3>
-
-
-        <div className=" text-brand-gold{color:#EAB308} flex overflow-x-auto whitespace-nowrap border-b mb-4" >
-          <TabButton icon={<LineChart size={18} />} isActive={reportType === "sales"} onClick={() => onTabClick("sales")}>Sales Report</TabButton>
-          <TabButton icon={<Package size={18} />} isActive={reportType === "stock"} onClick={() => onTabClick("stock")}>Stock Report</TabButton>
-          <TabButton icon={<Database size={18} />} isActive={reportType === "girwi"} onClick={() => onTabClick("girwi")}>Girwi Report</TabButton>
-        </div>
-
-        <div className="flex flex-col gap-4 md:flex-row md:items-end">
-          <div className="flex-1 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-gold"/>
-          </div>
-          <div className="flex-1 min-w-0">
-            <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-gold"/>
-          </div>
-          <button onClick={onReportButtonClick} className="px-6 py-3 bg-brand-gold text-white-600 font-bold rounded-lg shadow-md hover:bg-yellow-600 transition mt-2 md:mt-0">Generate Report</button>
-        </div>
+      {/* Tabs */}
+      <div className="tab-scroll flex gap-4 sm:gap-6 w-full whitespace-nowrap">
+        {[
+          { id: "sales", label: "Sales", icon: LineChart },
+          { id: "stock", label: "Stock", icon: Package },
+          { id: "girwi", label: "Girwi", icon: Database },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setReportType(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition font-semibold ${reportType === tab.id ? "bg-yellow-600 text-white" : "bg-gray-200 text-gray-700"
+              }`}
+          >
+            <tab.icon size={18} />
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {reportSummary && <ReportSummary summary={reportSummary} />}
+      {/* Summary Cards */}
+      <div className="summary-grid grid grid-cols-3 gap-4 w-full">
+        <div className="p-4 bg-white rounded-lg shadow border">
+          <p className="text-gray-600 text-sm">Total Count</p>
+          <h3 className="text-2xl font-bold">{summary.count || summary.total || 0}</h3>
+        </div>
 
-      <ReportPieChart data={chartData} title={reportSummary?.title || ""} />
+        {reportType === "sales" && (
+          <div className="p-4 bg-white rounded-lg shadow border">
+            <p className="text-gray-600 text-sm">Total Revenue</p>
+            <h3 className="text-2xl font-bold text-green-600">
+              ₹{summary.total?.toLocaleString("en-IN")}
+            </h3>
+          </div>
+        )}
 
-      <div className="overflow-x-auto bg-white rounded-xl shadow-xl border mt-6">
-        <table className="min-w-full border-separate border-spacing-0">
-          <thead className="bg-gray-50">
-            {renderTableHead()}
+        {reportType === "stock" && (
+          <div className="p-4 bg-white rounded-lg shadow border">
+            <p className="text-gray-600 text-sm">Total Weight</p>
+            <h3 className="text-2xl font-bold text-blue-600">{summary.total} g</h3>
+          </div>
+        )}
+
+        {reportType === "girwi" && (
+          <div className="p-4 bg-white rounded-lg shadow border">
+            <p className="text-gray-600 text-sm">Active Policies</p>
+            <h3 className="text-2xl font-bold text-red-600">{summary.active}</h3>
+          </div>
+        )}
+      </div>
+
+      {/* Chart */}
+      <div className="chart-box bg-white p-4 rounded-lg shadow border flex flex-col items-center h-[340px] sm:h-[400px]">
+        <h4 className="text-lg font-bold mb-2 flex items-center gap-2">
+          <PieChartIcon size={18} /> Insights
+        </h4>
+
+        {reportType === "sales" ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={chartData}>
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="value" fill="#D97706" />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie dataKey="value" data={chartData} cx="50%" cy="50%" outerRadius={110}>
+                {chartData.map((entry, index) => (
+                  <Cell key={index} fill={entry.fill || COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto bg-white shadow rounded-lg ">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-200 text-gray-700 uppercase text-xs">
+            <tr>
+              {reportType === "sales" && (
+                <>
+                  <th className="th">Invoice</th>
+                  <th className="th">Customer</th>
+                  <th className="th">Date</th>
+                  <th className="th">Total</th>
+                </>
+              )}
+              {reportType === "stock" && (
+                <>
+                  <th className="th">SKU</th>
+                  <th className="th">Name</th>
+                  <th className="th">HSN</th>
+                  <th className="th">HUID</th>
+                  <th className="th">Weight</th>
+                </>
+              )}
+              {reportType === "girwi" && (
+                <>
+                  <th className="th">#</th>
+                  <th className="th">Customer</th>
+                  <th className="th">Item</th>
+                  <th className="th">Weight</th>
+                  <th className="th">Date</th>
+                  <th className="th">Status</th>
+                </>
+              )}
+            </tr>
           </thead>
+
           <tbody>
-            {isLoading ? (
-              <tr><td colSpan="6" className="text-center py-10 text-gray-400">Loading data...</td></tr>
-            ) : (
-              renderTableBody()
-            )}
+            {reportData.map((i, index) => (
+              <tr key={index} className="border-b text-center hover:bg-gray-50">
+                {reportType === "sales" && (
+                  <>
+                    <td>{i.id}</td>
+                    <td>{i.customer?.name}</td>
+                    <td>{i.date}</td>
+                    <td className="font-bold text-green-700">
+                      ₹{i.grandTotal?.toLocaleString()}
+                    </td>
+                  </>
+                )}
+
+                {reportType === "stock" && (
+                  <>
+                    <td>{i.id}</td>
+                    <td>{i.name}</td>
+                    <td>{i.hsnCode}</td>
+                    <td>{i.huid}</td>
+                    <td className="font-bold">{i.totalWeight} g</td>
+                  </>
+                )}
+
+                {reportType === "girwi" && (
+                  <>
+                    <td>{i.girviNumber}</td>
+                    <td>{i.customerName}</td>
+                    <td>{i.itemName}</td>
+                    <td>{i.weight} g</td>
+                    <td>{i.startDate}</td>
+                    <td className={i.status === "Active" ? "text-green-600" : "text-red-600"}>
+                      {i.status}
+                    </td>
+                  </>
+                )}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
+
+      {/* Styles */}
+      <style>{`
+        
+  .th { 
+    padding: 10px; 
+    font-weight: 600; 
+    white-space: nowrap;
+  }
+
+  /* 📱 Mobile First Responsive */
+  .summary-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .chart-box {
+    width: 100%;
+    height: auto;
+    min-height: 240px;
+  }
+
+  table th, table td {
+    padding: 6px !important;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .tab-scroll {
+    overflow-x: auto;
+    display: flex;
+    gap: 10px;
+    scrollbar-width: thin;
+  }
+
+  /* Tablet Screens */
+  @media (min-width: 600px) {
+    .summary-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .chart-box {
+      min-height: 300px;
+    }
+  }
+
+  /* Laptop Size */
+  @media (min-width: 1024px) {
+    .summary-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .chart-box {
+      min-height: 360px;
+    }
+  }
+
+
+
+      `}</style>
     </div>
   );
 };
 
-export default App;
+export default Reports;

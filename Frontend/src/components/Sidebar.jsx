@@ -33,7 +33,7 @@ const Sidebar = () => {
   return (
     <>
       {/* ----- DESKTOP & TABLET SIDEBAR ----- */}
-      <div className="hidden md:flex flex-col w-56 lg:w-64 bg-white border-r shadow-lg h-screen fixed">
+      <div className="hidden md:flex flex-col w-64 lg:w-64 bg-white border-r shadow-lg h-screen fixed">
         <div className="flex-1 flex flex-col pt-5 pb-4 overflow-y-auto">
           <nav className="mt-5 px-3 space-y-2">
 

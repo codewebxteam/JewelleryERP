@@ -1,152 +1,208 @@
-import React, { useState } from "react";
-import { stockData } from "../data/dummyData.jsx"; // Import dummy data
-import { Plus, Search, Edit, Trash2, X, Package } from "lucide-react"; // Import icons
+import React, { useState, useEffect } from "react";
+import { Plus, Search, Edit, Trash2, X, Package } from "lucide-react";
 
 const Stock = () => {
-  // --- State for the list, search, and modal ---
-  const [stockList, setStockList] = useState(stockData);
+  // ---- Load / Save from localStorage ----
+  const loadInitialStock = () => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem("jewellery_stock");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const [stockList, setStockList] = useState(loadInitialStock);
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [currentItem, setCurrentItem] = useState(null); // Used for editing
+  const [currentItem, setCurrentItem] = useState(null);
+
   const [formData, setFormData] = useState({
     name: "",
-    category: "",
-    weight: "",
-    stock: "",
-    price: "",
+    hsnCode: "",
+    huid: "",
+    totalWeight: "",
   });
 
-  // --- Filter Logic ---
+  // Save to localStorage whenever stockList changes
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("jewellery_stock", JSON.stringify(stockList));
+  }, [stockList]);
+
+  const productNames = [
+    "Gold Ring",
+    "Silver Ring",
+    "Gold Chain",
+    "Gold Bangles",
+    "Pendant",
+    "Earrings",
+    "Nose Pin",
+    "Bracelet",
+    "Coin",
+    "Other",
+  ];
+
   const filteredStock = stockList.filter(
     (item) =>
       item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // --- Modal & Form Handling ---
   const openModal = () => {
     setIsModalOpen(true);
     setIsEditMode(false);
-    setFormData({ name: "", category: "", weight: "", stock: "", price: "" }); // Reset form
+    setCurrentItem(null);
+    setFormData({
+      name: "",
+      hsnCode: "",
+      huid: "",
+      totalWeight: "",
+    });
   };
 
   const openEditModal = (item) => {
     setIsModalOpen(true);
     setIsEditMode(true);
-    setCurrentItem(item); // Set the item to be edited
-    setFormData(item); // Pre-fill the form
+    setCurrentItem(item);
+    setFormData({
+      name: item.name || "",
+      hsnCode: item.hsnCode || "",
+      huid: item.huid || "",
+      totalWeight: item.totalWeight || "",
+    });
   };
 
   const closeModal = () => {
     setIsModalOpen(false);
-    setCurrentItem(null);
     setIsEditMode(false);
+    setCurrentItem(null);
   };
 
-  const handleFormChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
+  const handleFormChange = (e) =>
+    setFormData({ ...formData, [e.target.name]: e.target.value });
 
   const handleFormSubmit = (e) => {
     e.preventDefault();
-    if (isEditMode) {
-      // --- Update Logic (for state) ---
-      // TODO: Add Firebase updateDoc() here
-      setStockList((prevList) =>
-        prevList.map((item) =>
-          item.id === currentItem.id ? { ...item, ...formData } : item
+
+    const weightNum = parseFloat(formData.totalWeight);
+    if (isNaN(weightNum)) {
+      alert("Total weight grams sahi number me daalo.");
+      return;
+    }
+
+    const finalWeight = Number(weightNum.toFixed(2));
+
+    if (isEditMode && currentItem) {
+      setStockList((prev) =>
+        prev.map((item) =>
+          item.id === currentItem.id
+            ? {
+                ...item,
+                name: formData.name,
+                hsnCode: formData.hsnCode,
+                huid: formData.huid,
+                totalWeight: finalWeight,
+              }
+            : item
         )
       );
-      console.log("Updated item:", currentItem.id);
     } else {
-      // --- Add New Logic (for state) ---
-      // TODO: Add Firebase addDoc() here
       const newItem = {
-        id: `SKU-${Math.floor(Math.random() * 1000)}`, // Temporary ID
-        ...formData,
-        weight: parseFloat(formData.weight),
-        stock: parseInt(formData.stock, 10),
-        price: parseFloat(formData.price),
+        id: `SKU-${Math.floor(10000 + Math.random() * 90000)}`,
+        name: formData.name,
+        hsnCode: formData.hsnCode,
+        huid: formData.huid,
+        totalWeight: finalWeight,
       };
-      setStockList((prevList) => [newItem, ...prevList]);
-      console.log("Added new item:", newItem);
+      setStockList((prev) => [newItem, ...prev]);
     }
     closeModal();
   };
 
   const handleDelete = (id) => {
-    // --- Delete Logic (for state) ---
-    // TODO: Add Firebase deleteDoc() here
-    if (window.confirm("Are you sure you want to delete this item?")) {
-      setStockList((prevList) => prevList.filter((item) => item.id !== id));
-      console.log("Deleted item:", id);
+    if (window.confirm("Ye stock item delete karna hai?")) {
+      setStockList((prev) => prev.filter((item) => item.id !== id));
     }
   };
 
-  return (
-    <div>
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">Stock Inventory</h2>
+  const lowStockClass = (total) => {
+    if (total <= 0) return "text-red-700 font-extrabold";
+    if (total < 5) return "text-red-600 font-bold";
+    if (total < 10) return "text-orange-600 font-bold";
+    return "text-green-700 font-bold";
+  };
 
-      {/* --- Search and Add Button --- */}
-      <div className="flex justify-between items-center mb-6">
-        <div className="relative w-full max-w-md">
+  return (
+    <div className="space-y-6 p-4 sm:px-4 md:px-6 lg:px-4 pb-24">
+      <h2 className="text-3xl font-bold text-gray-800 mb-6">
+        Stock Inventory
+      </h2>
+
+      {/* Search + Add */}
+      <div className="flex justify-between flex-col md:flex-row gap-4 mb-6">
+        <div className="relative w-full md:max-w-md">
           <input
             type="text"
-            placeholder="Search by Product Name or SKU..."
-            className="w-full pl-10 pr-4 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-gold"
+            placeholder="Search by Name or SKU..."
+            className="w-full pl-10 pr-4 py-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-yellow-600"
             onChange={(e) => setSearchTerm(e.target.value)}
           />
           <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
             size={18}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
           />
         </div>
+
         <button
           onClick={openModal}
-          className="flex items-center px-6 py-2 bg-brand-gold text-white font-semibold rounded-lg shadow-md hover:bg-opacity-90 transition-colors"
+          className="px-6 py-2 bg-yellow-700 text-white rounded-lg font-bold shadow flex items-center justify-center hover:bg-yellow-800"
         >
-          <Plus size={18} className="mr-2" />
-          Add New Stock Item
+          <Plus size={18} className="mr-2" /> Add Stock
         </button>
       </div>
 
-      {/* --- Stock Data Table --- */}
-      <div className="bg-white p-6 rounded-lg shadow-lg overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      {/* Table */}
+      <div className="overflow-x-auto bg-white p-4 sm:p-6 rounded-lg shadow-lg">
+        <table className="min-w-full">
+          <thead className="bg-gray-100 text-xs text-gray-600 uppercase">
             <tr>
-              <th className="th">SKU</th>
-              <th className="th">Product Name</th>
-              <th className="th">Category</th>
-              <th className="th">Weight (g)</th>
-              <th className="th">Stock Qty</th>
-              <th className="th">Price</th>
-              <th className="th">Actions</th>
+              <th className="px-3 py-2">SKU</th>
+              <th className="px-3 py-2">Name</th>
+              <th className="px-3 py-2">HSN</th>
+              <th className="px-3 py-2">HUID</th>
+              <th className="px-3 py-2">Total (g)</th>
+              <th className="px-3 py-2">Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+
+          <tbody className="divide-y">
             {filteredStock.map((item) => (
-              <tr key={item.id} className="hover:bg-gray-50">
-                <td className="td font-medium">{item.id}</td>
+              <tr key={item.id} className="text-center hover:bg-gray-50">
+                <td className="td">{item.id}</td>
                 <td className="td">{item.name}</td>
-                <td className="td">{item.category}</td>
-                <td className="td">{item.weight}</td>
-                <td className="td">{item.stock}</td>
-                <td className="td">₹{item.price.toLocaleString()}</td>
+                <td className="td">{item.hsnCode}</td>
+                <td className="td">{item.huid}</td>
+                <td className={`td ${lowStockClass(item.totalWeight || 0)}`}>
+                  {item.totalWeight <= 0
+                    ? "Out of Stock"
+                    : `${item.totalWeight} g`}
+                </td>
                 <td className="td">
-                  {/* --- Action Buttons --- */}
-                  <div className="flex space-x-3">
+                  <div className="flex justify-center gap-3">
                     <button
                       onClick={() => openEditModal(item)}
                       className="text-blue-600 hover:text-blue-800"
+                      title="Edit"
                     >
                       <Edit size={18} />
                     </button>
                     <button
                       onClick={() => handleDelete(item.id)}
                       className="text-red-600 hover:text-red-800"
+                      title="Delete"
                     >
                       <Trash2 size={18} />
                     </button>
@@ -154,103 +210,101 @@ const Stock = () => {
                 </td>
               </tr>
             ))}
+            {filteredStock.length === 0 && (
+              <tr>
+                <td className="td text-center text-gray-400" colSpan={6}>
+                  No stock items added yet.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* --- Add/Edit Modal --- */}
+      {/* Add / Edit Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-lg">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-2xl font-bold text-gray-800">
-                {isEditMode ? "Edit Stock Item" : "Add New Stock Item"}
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-3 z-50">
+          <div className="bg-white p-6 w-full max-w-lg rounded-lg shadow-lg">
+            <div className="flex justify-between mb-4">
+              <h3 className="text-xl font-semibold">
+                {isEditMode ? "Edit Stock" : "Add Stock"}
               </h3>
-              <button
-                onClick={closeModal}
-                className="text-gray-500 hover:text-gray-800"
-              >
-                <X size={24} />
-              </button>
+              <X className="cursor-pointer" onClick={closeModal} />
             </div>
+
             <form onSubmit={handleFormSubmit} className="space-y-4">
+              {/* Name Dropdown */}
               <div>
                 <label className="label">Product Name</label>
-                <input
-                  type="text"
+                <select
                   name="name"
                   value={formData.name}
-                  onChange={handleFormChange}
                   required
                   className="input"
-                />
-              </div>
-              <div>
-                <label className="label">Category</label>
-                <input
-                  type="text"
-                  name="category"
-                  value={formData.category}
                   onChange={handleFormChange}
-                  required
-                  className="input"
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="label">Weight (g)</label>
-                  <input
-                    type="number"
-                    name="weight"
-                    value={formData.weight}
-                    onChange={handleFormChange}
-                    required
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Stock Qty</label>
-                  <input
-                    type="number"
-                    name="stock"
-                    value={formData.stock}
-                    onChange={handleFormChange}
-                    required
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Price (₹)</label>
-                  <input
-                    type="number"
-                    name="price"
-                    value={formData.price}
-                    onChange={handleFormChange}
-                    required
-                    className="input"
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end pt-4">
-                <button
-                  type="submit"
-                  className="flex items-center px-6 py-2 bg-brand-gold text-white font-semibold rounded-lg shadow-md hover:bg-opacity-90"
                 >
-                  <Package size={18} className="mr-2" />
-                  {isEditMode ? "Save Changes" : "Save Item"}
-                </button>
+                  <option value="">Select Jewellery Type</option>
+                  {productNames.map((name) => (
+                    <option key={name}>{name}</option>
+                  ))}
+                </select>
               </div>
+
+              {/* HSN + HUID */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">HSN Code</label>
+                  <input
+                    placeholder="Enter HSN Code"
+                    name="hsnCode"
+                    className="input"
+                    value={formData.hsnCode}
+                    onChange={handleFormChange}
+                  />
+                </div>
+                <div>
+                  <label className="label">HUID</label>
+                  <input
+                    placeholder="Enter HUID Code"
+                    name="huid"
+                    className="input"
+                    value={formData.huid}
+                    onChange={handleFormChange}
+                  />
+                </div>
+              </div>
+
+              {/* Total Weight */}
+              <div>
+                <label className="label">Total Weight (g)</label>
+                <input
+                  placeholder="Ex: 25.50"
+                  name="totalWeight"
+                  type="number"
+                  step="0.01"
+                  required
+                  className="input"
+                  value={formData.totalWeight}
+                  onChange={handleFormChange}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="px-6 py-2 bg-yellow-700 text-white w-full rounded-lg mt-3 hover:bg-yellow-800 flex items-center justify-center"
+              >
+                <Package size={18} className="mr-2" />
+                Save
+              </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* --- Reusable styles for this component --- */}
       <style>{`
-        .th { padding: 12px 16px; text-align: left; font-size: 12px; font-medium; color: #6B7280; text-transform: uppercase; }
-        .td { padding: 12px 16px; white-space: nowrap; font-size: 14px; color: #374151; }
-        .label { display: block; margin-bottom: 4px; font-size: 14px; font-medium; color: #374151; }
-        .input { margin-top: 4px; display: block; width: 100%; padding: 8px 12px; border: 1px solid #D1D5DB; border-radius: 8px; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05); }
+        .td { padding: 10px; font-size: 14px; }
+        .label { font-size: 14px; font-weight: 600; margin-bottom: 4px; display: block; }
+        .input { width: 100%; padding: 8px; border:1px solid #d1d5db; border-radius:8px; }
       `}</style>
     </div>
   );
