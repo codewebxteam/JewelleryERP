@@ -256,7 +256,7 @@ export default function GirviPage() {
     const [selectedGirvi, setSelectedGirvi] = useState(null);
 
     const savedData = JSON.parse(localStorage.getItem("girvi_records"));
-    const [girviListState, setGirviListState] = useState(savedData || initialGirviList);
+    const [girviListState, setGirviListState] = useState(savedData || []);
 
 
     const handleFormSubmit = (formData) => {
