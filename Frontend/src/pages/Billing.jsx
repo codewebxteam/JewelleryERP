@@ -14,8 +14,15 @@ import {
   CheckCircle,
   Loader2,
   AlertCircle,
-  Pencil,
 } from "lucide-react";
+import { db } from "../firebase";
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  updateDoc,
+  doc,
+} from "firebase/firestore";
 
 // --- Configuration ---
 const CGST_RATE = 0.09;
@@ -94,41 +101,49 @@ const numberToWords = (num) => {
 };
 
 const Billing = () => {
-  // Load invoices from localStorage
-  const loadInvoices = () => {
-    const stored = localStorage.getItem("invoices");
-    return stored ? JSON.parse(stored) : [];
-  };
+  const [invoices, setInvoices] = useState([]);
 
-  const [invoices, setInvoices] = useState(loadInvoices());
+  // Load invoices
+  useEffect(() => {
+    const ref = collection(db, "invoices");
+    const unsub = onSnapshot(ref, (snap) => {
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setInvoices(all);
+    });
+    return () => unsub();
+  }, []);
 
   // --- Main State ---
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [loadingInvoiceId, setLoadingInvoiceId] = useState(null);
+  const [invoiceNo, setInvoiceNo] = useState(null);
 
-  // NEW: Track invoice being edited
-  const [editingInvoiceId, setEditingInvoiceId] = useState(null);
+  // Manual date & time for invoice
+  const [invoiceDate, setInvoiceDate] = useState("");
+  const [invoiceTime, setInvoiceTime] = useState("");
 
-  // Load stock from localStorage (for suggestions + auto-fill)
+  // UTR for new invoice payment
+  const [utr, setUtr] = useState("");
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 5;
+
+  // Payment modal for due payments
+  const [paymentModal, setPaymentModal] = useState(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [payMode, setPayMode] = useState("Cash");
+  const [payUtr, setPayUtr] = useState("");
+
+  // Stock
   const [stockInventory, setStockInventory] = useState([]);
-
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("jewellery_stock");
-      setStockInventory(stored ? JSON.parse(stored) : []);
-    } catch {
-      setStockInventory([]);
-    }
-  }, []); // jab modal open hoga, fresh stock load hoga
-
-
-  // Save invoices to localStorage whenever updated
-  useEffect(() => {
-    localStorage.setItem("invoices", JSON.stringify(invoices));
-  }, [invoices]);
-
-
+    const unsub = onSnapshot(collection(db, "jewellery_stock"), (snap) => {
+      setStockInventory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
 
   // --- Invoice Form State ---
   const [customer, setCustomer] = useState({
@@ -180,13 +195,22 @@ const Billing = () => {
     const q = productQuery.toLowerCase();
 
     const filtered = stockInventory
-      .filter((item) => item.name && item.name.toLowerCase().includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name)) // A-Z by name
+      .filter(
+        (item) =>
+          item.name?.toLowerCase().includes(q) ||
+          item.sku?.toLowerCase().includes(q)
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 6);
 
     setSuggestions(filtered);
     setShowSuggestions(true);
   }, [productQuery, stockInventory]);
+
+  // Reset page when search changes
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm]);
 
   // --- Financial Calculations ---
   const newItemsTotal = useMemo(
@@ -226,26 +250,11 @@ const Billing = () => {
       stockInventory.find(
         (s) =>
           s.name === itemName &&
-          (s.hsnCode || "") === (itemHsn || "") &&
-          (s.huid || "") === (itemHuc || "")
+          (s.hsnCode || s.hsn || "") === (itemHsn || "") &&
+          (s.huid || s.huc || "") === (itemHuc || "")
       ),
     [stockInventory, itemName, itemHsn, itemHuc]
   );
-
-
-  // --- Edit Invoice Handler ---
-  const handleEditInvoice = (invoice) => {
-    setEditingInvoiceId(invoice.id);
-
-    setCustomer(invoice.customer);
-    setPaymentMode(invoice.paymentMode);
-    setNewItems(invoice.newItems || []);
-    setOldItems(invoice.oldItems || []);
-    setDiscount(invoice.discount || "");
-    setReceivedAmount(invoice.receivedAmount || "");
-
-    setIsModalOpen(true);
-  };
 
   const handleAddNewItem = (e) => {
     e.preventDefault();
@@ -259,13 +268,19 @@ const Billing = () => {
     const rate = Number(itemRate);
     const making = Number(itemMaking);
 
-    // 🛑 NEW STOCK VALIDATION
     if (selectedStockItem) {
-      const currentStock = Number(selectedStockItem.totalWeight || 0);
+      const currentStock = Number(
+        selectedStockItem.totalWeight ||
+        selectedStockItem.weight ||
+        selectedStockItem.qty ||
+        0
+      );
 
       if (weight > currentStock) {
-        alert(`Stock is low! Only ${currentStock}g available. Please enter lower weight.`);
-        setItemWeight(""); // reset field for correct value
+        alert(
+          `Stock is low! Only ${currentStock}g available. Please enter lower weight.`
+        );
+        setItemWeight("");
         return;
       }
     }
@@ -285,7 +300,6 @@ const Billing = () => {
 
     setNewItems((prev) => [...prev, newItem]);
 
-    // Reset input fields
     setItemName("");
     setProductQuery("");
     setItemHsn("7113");
@@ -296,7 +310,6 @@ const Billing = () => {
     setSuggestions([]);
     setShowSuggestions(false);
   };
-
 
   const handleRemoveNewItem = (index) => {
     setNewItems((prev) => prev.filter((_, i) => i !== index));
@@ -324,7 +337,6 @@ const Billing = () => {
 
     setOldItems((prev) => [...prev, oldItem]);
 
-    // Reset old fields
     setOldItemName("");
     setOldItemWeight("");
     setOldItemRate("");
@@ -334,131 +346,200 @@ const Billing = () => {
     setOldItems((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // 🔥 UPDATE STOCK FROM INVOICE (only for new invoice, not edit)
-  const updateStockFromInvoice = (invoice) => {
-    try {
-      const stored = localStorage.getItem("jewellery_stock");
-      if (!stored) return;
-      let stockList = JSON.parse(stored) || [];
+  const updateStockFromInvoice = async (invoice) => {
+    for (const sold of invoice.newItems) {
+      const match = stockInventory.find(
+        (s) =>
+          s.name === sold.name &&
+          (s.hsnCode || s.hsn || "") === (sold.hsn || "") &&
+          (s.huid || s.huc || "") === (sold.huc || "")
+      );
 
-      const updated = stockList.map((item) => ({ ...item }));
+      if (!match) continue;
 
-      invoice.newItems.forEach((sold) => {
-        const index = updated.findIndex(
-          (s) =>
-            s.name === sold.name &&
-            (s.hsnCode || "") === (sold.hsn || "") &&
-            (s.huid || "") === (sold.huc || "")
-        );
-        if (index === -1) return;
+      let newTotal = Number((match.totalWeight - sold.weight).toFixed(2));
+      if (newTotal < 0) newTotal = 0;
 
-        const stockItem = updated[index];
-        const soldWeight = Number(sold.weight || 0);
-        if (!soldWeight || soldWeight <= 0) return;
-
-        const currentTotal = Number(stockItem.totalWeight || 0);
-        const perPieceWeight = Number(stockItem.weight || 0);
-
-        let newTotal = Number((currentTotal - soldWeight).toFixed(2));
-        if (newTotal < 0) newTotal = 0;
-
-        let newQty = stockItem.quantity;
-        if (perPieceWeight > 0) {
-          newQty = Number((newTotal / perPieceWeight).toFixed(2));
-        }
-
-        updated[index] = {
-          ...stockItem,
-          totalWeight: newTotal,
-          quantity: newTotal <= 0 ? 0 : newQty,
-        };
+      await updateDoc(doc(db, "jewellery_stock", match.id), {
+        totalWeight: newTotal,
+        quantity:
+          newTotal > 0
+            ? Number((newTotal / (match.weight || 1)).toFixed(2))
+            : 0,
       });
-
-      localStorage.setItem("jewellery_stock", JSON.stringify(updated));
-    } catch (err) {
-      console.error("Stock update error:", err);
     }
   };
 
-  // --- Save Handler (Create or Update) ---
-  const handleSaveInvoice = () => {
+  const handleSaveInvoice = async () => {
     if (!customer.name || newItems.length === 0) {
       alert("Customer Name and at least one Item are required.");
       return;
     }
 
-    if (editingInvoiceId) {
-      // UPDATE EXISTING INVOICE (no stock change to avoid double adjustment)
-      const updatedInvoices = invoices.map((inv) =>
-        inv.id === editingInvoiceId
-          ? {
-            ...inv,
-            customer,
-            paymentMode,
-            newItems,
-            oldItems,
-            discount: Number(discount || 0),
-            receivedAmount: Number(receivedAmount || 0),
-            balanceDue,
-            subTotal,
-            oldItemTotal: oldItemsTotal,
-            taxableAmount,
-            cgst,
-            sgst,
-            grandTotal,
-          }
-          : inv
-      );
-
-      setInvoices(updatedInvoices);
-    } else {
-      // CREATE NEW INVOICE
-      const nextId = invoices.length
-        ? Math.max(...invoices.map((inv) => parseInt(inv.id.split("-")[1]))) + 1
-        : 1001;
-
-      const newInvoice = {
-        id: `INV-${nextId}`,
-        date: new Date().toISOString().split("T")[0],
-        customer,
-        paymentMode,
-        newItems,
-        oldItems,
-        discount: Number(discount || 0),
-        receivedAmount: Number(receivedAmount || 0),
-        balanceDue,
-        subTotal,
-        oldItemTotal: oldItemsTotal,
-        taxableAmount,
-        sgst,
-        cgst,
-        grandTotal,
-      };
-
-      setInvoices([newInvoice, ...invoices]);
-
-      // ✅ Reduce stock based on this invoice
-      updateStockFromInvoice(newInvoice);
+    if (!invoiceDate || !invoiceTime) {
+      alert("Please enter invoice date and time.");
+      return;
     }
 
-    // Reset
-    setIsModalOpen(false);
-    setEditingInvoiceId(null);
+    const receivedNum = Number(receivedAmount || 0);
+
+    // 🛑 NEW: extra payment block on NEW BILL
+    if (receivedNum > grandTotal) {
+      alert(
+        `Allowed Payment Limit: ${formatCurrency(grandTotal)}\n` +
+        `You entered: ${formatCurrency(receivedNum)}`
+      );
+      return;
+    }
+
+    if (paymentMode !== "Cash" && receivedNum > 0 && !utr.trim()) {
+      alert("UTR / Transaction ID is required for non-cash payments.");
+      return;
+    }
+
+    const finalInvoiceNo = invoiceNo || `INV-${Date.now()}`;
+
+    const balance = grandTotal - receivedNum;
+    const safeBalance = balance > 0 ? balance : 0;
+
+    const initialHistory =
+      receivedNum > 0
+        ? [
+          {
+            amount: receivedNum,
+            method: paymentMode,
+            utr: paymentMode !== "Cash" ? utr.trim() : "",
+            date: new Date().toISOString(),
+            balanceAfter: safeBalance,
+          },
+        ]
+        : [];
+
+    const invoicePayload = {
+      invoiceNo: finalInvoiceNo,
+      date: invoiceDate,
+      time: invoiceTime,
+      customer,
+      paymentMode,
+      utr: paymentMode !== "Cash" && receivedNum > 0 ? utr.trim() : "",
+      newItems,
+      oldItems,
+      discount: Number(discount || 0),
+      receivedAmount: receivedNum,
+      balanceDue: safeBalance,
+      subTotal,
+      oldItemTotal: oldItemsTotal,
+      taxableAmount,
+      cgst,
+      sgst,
+      grandTotal,
+      paymentHistory: initialHistory,
+    };
+
+    try {
+      await addDoc(collection(db, "invoices"), {
+        ...invoicePayload,
+        createdAt: new Date(),
+      });
+
+      await updateStockFromInvoice(invoicePayload);
+
+      alert("Invoice Saved Successfully ✨");
+    } catch (err) {
+      console.error(err);
+      alert("❌ Saving Error! Check console.");
+    }
+
+    setInvoiceNo(null);
+
     setCustomer({ name: "", address: "", contact: "" });
     setNewItems([]);
     setOldItems([]);
     setDiscount("");
     setReceivedAmount("");
+    setInvoiceDate("");
+    setInvoiceTime("");
+    setPaymentMode("Cash");
+    setUtr("");
+
+    setItemName("");
+    setItemHsn("7113");
+    setItemHuc("");
+    setItemWeight("");
+    setItemRate("");
+    setItemMaking("");
+
+    setIsModalOpen(false);
   };
+
+  const handleAddPayment = async () => {
+    if (!paymentModal) return;
+
+    const amountNum = Number(payAmount || 0);
+    if (!amountNum || amountNum <= 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+
+    if (payMode !== "Cash" && !payUtr.trim()) {
+      alert("UTR / Transaction ID is required for non-cash payments.");
+      return;
+    }
+
+    const currentDue = Number(paymentModal.balanceDue || 0);
+
+    // 🛑 NEW: Hard block – no extra payment
+    if (amountNum > currentDue) {
+      alert(
+        `Allowed Payment Limit: ${formatCurrency(currentDue)}\n` +
+        `You entered: ${formatCurrency(amountNum)}`
+      );
+      return;
+    }
+
+    try {
+      const invRef = doc(db, "invoices", paymentModal.id);
+      const existingHistory = paymentModal.paymentHistory || [];
+
+      const newBalance = Math.max(0, currentDue - amountNum);
+      const newReceived =
+        Number(paymentModal.receivedAmount || 0) + amountNum;
+
+      const newHistoryEntry = {
+        amount: amountNum,
+        method: payMode,
+        utr: payMode !== "Cash" ? payUtr.trim() : "",
+        date: new Date().toISOString(),
+        balanceAfter: newBalance,
+      };
+
+      await updateDoc(invRef, {
+        receivedAmount: newReceived,
+        balanceDue: newBalance,
+        paymentHistory: [...existingHistory, newHistoryEntry],
+        updatedAt: new Date(),
+      });
+
+      alert("Payment updated successfully ✅");
+    } catch (error) {
+      console.error(error);
+      alert("Error updating payment. Check console.");
+    }
+
+    setPaymentModal(null);
+    setPayAmount("");
+    setPayMode("Cash");
+    setPayUtr("");
+  };
+
 
   // --- GENERATE PDF ---
   const generatePDF = async (invoice, action = "view") => {
     setLoadingInvoiceId(invoice.id);
 
     try {
-      const doc = new jsPDF();
+      const pdf = new jsPDF();
 
-      // Image Loader with White Background fix
       const loadImage = (src) => {
         return new Promise((resolve) => {
           const img = new Image();
@@ -479,89 +560,94 @@ const Billing = () => {
       };
 
       const logoData = await loadImage(logoImg);
-      const pageWidth = doc.internal.pageSize.width;
-      const pageHeight = doc.internal.pageSize.height;
+      const pageWidth = pdf.internal.pageSize.width;
+      const pageHeight = pdf.internal.pageSize.height;
 
       const goldColor = [218, 165, 32];
       const lightGold = [253, 245, 230];
       const darkText = [30, 30, 30];
 
-      // --- 1. HEADER ---
-      doc.setFillColor(...goldColor);
-      doc.rect(0, 0, pageWidth, 3, "F");
+      // Header
+      pdf.setFillColor(...goldColor);
+      pdf.rect(0, 0, pageWidth, 3, "F");
 
-      // FIXED: Moved Invoice text up to prevent overlap
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(14);
-      doc.setTextColor(...goldColor);
-      doc.text("TAX INVOICE", pageWidth - 15, 12, { align: "right" }); // Top position
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(14);
+      pdf.setTextColor(...goldColor);
+      pdf.text("TAX INVOICE", pageWidth - 15, 12, { align: "right" });
 
-      doc.setFontSize(10);
-      doc.setTextColor(80, 80, 80);
-      doc.text(`# ${invoice.id}`, pageWidth - 15, 18, { align: "right" });
-
-      if (logoData) {
-        doc.addImage(logoData, "JPEG", 10, 8, 30, 30);
-      }
-
-      // FIXED: Shop Name moved down to avoid overlap with Invoice Text
-      doc.setFont("times", "bold");
-      doc.setFontSize(21);
-      doc.setTextColor(...goldColor);
-      doc.text("SHREE LAXMI JEWELLERS & SONS", 45, 22);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.setTextColor(...darkText);
-      doc.text("Exclusive Gold & Diamond Jewellery", 45, 28);
-      doc.text("123, Main Road, City Center - 400001", 45, 33);
-      doc.text("Ph: 98765 43210 | GSTIN: 27ABCDE1234F1Z5", 45, 38);
-
-      doc.setDrawColor(220);
-      doc.line(10, 45, pageWidth - 10, 45);
-
-      // --- 2. BILLING INFO ---
-      let yPos = 55;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(...goldColor);
-      doc.text("BILL TO:", 14, yPos);
-
-      doc.setTextColor(0);
-      doc.setFontSize(11);
-      doc.text(invoice.customer.name.toUpperCase(), 14, yPos + 6);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.text(invoice.customer.address || "N/A", 14, yPos + 12);
-      doc.text(`Ph: ${invoice.customer.contact}`, 14, yPos + 17);
-
-      const rightColX = 165;
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(...goldColor);
-      doc.text("DETAILS:", rightColX, yPos);
-
-      doc.setTextColor(0);
-      doc.setFont("helvetica", "normal");
-      doc.text("Date:", rightColX, yPos + 6);
-      doc.text(
-        new Date(invoice.date).toLocaleDateString("en-GB"),
-        pageWidth - 15,
-        yPos + 6,
-        { align: "right" }
-      );
-
-      doc.text("Mode:", rightColX, yPos + 12);
-      doc.text(invoice.paymentMode, pageWidth - 15, yPos + 12, {
+      pdf.setFontSize(10);
+      pdf.setTextColor(80, 80, 80);
+      pdf.text(` ${invoice.invoiceNo || invoice.id}`, pageWidth - 15, 16, {
         align: "right",
       });
 
-      // --- 3. TABLE ---
-      yPos += 25;
-      autoTable(doc, {
+      if (logoData) {
+        pdf.addImage(logoData, "JPEG", 10, 8, 30, 30);
+      }
+
+      pdf.setFont("times", "bold");
+      pdf.setFontSize(21);
+      pdf.setTextColor(...goldColor);
+      pdf.text("SHREE LAXMI JEWELLERS & SONS", 45, 22);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.setTextColor(...darkText);
+      pdf.text("Exclusive Gold & Diamond Jewellery", 45, 28);
+      pdf.text("123, Main Road, City Center - 400001", 45, 33);
+      pdf.text("Ph: 98765 43210 | GSTIN: 27ABCDE1234F1Z5", 45, 38);
+
+      pdf.setDrawColor(220);
+      pdf.line(10, 45, pageWidth - 10, 45);
+
+      // Billing info
+      let yPos = 55;
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      pdf.setTextColor(...goldColor);
+      pdf.text("BILL TO:", 14, yPos);
+
+      pdf.setTextColor(0);
+      pdf.setFontSize(11);
+      pdf.text((invoice.customer?.name || "").toUpperCase(), 14, yPos + 6);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text(invoice.customer?.address || "N/A", 14, yPos + 12);
+      pdf.text(`Ph: ${invoice.customer?.contact || "-"}`, 14, yPos + 17);
+
+      const rightColX = 155;
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(...goldColor);
+      pdf.text("DETAILS:", rightColX, yPos);
+
+      pdf.setTextColor(0);
+      pdf.setFont("helvetica", "normal");
+
+      const dateStr = invoice.date
+        ? new Date(invoice.date).toLocaleDateString("en-GB")
+        : "-";
+
+      pdf.text("Date:", rightColX, yPos + 6);
+      pdf.text(dateStr, pageWidth - 15, yPos + 6, { align: "right" });
+
+      pdf.text("Time:", rightColX, yPos + 12);
+      pdf.text(invoice.time || "-", pageWidth - 15, yPos + 12, {
+        align: "right",
+      });
+
+      pdf.text("Mode:", rightColX, yPos + 18);
+      pdf.text(invoice.paymentMode || "-", pageWidth - 15, yPos + 18, {
+        align: "right",
+      });
+
+      // Items table
+      yPos += invoice.utr ? 32 : 28;
+      autoTable(pdf, {
         startY: yPos,
         head: [
           [
-            "#",
+            "Sno.",
             "Item Description",
             "HSN",
             "HUC",
@@ -571,7 +657,7 @@ const Billing = () => {
             "Total",
           ],
         ],
-        body: invoice.newItems.map((item, i) => [
+        body: (invoice.newItems || []).map((item, i) => [
           i + 1,
           item.name,
           item.hsn,
@@ -598,17 +684,17 @@ const Billing = () => {
         styles: { lineColor: [220, 220, 220], lineWidth: 0.1, fontSize: 9 },
       });
 
-      let finalY = doc.lastAutoTable.finalY;
+      let finalY = pdf.lastAutoTable.finalY || yPos;
 
-      // --- 4. EXCHANGE ---
-      if (invoice.oldItems.length > 0) {
+      // Old items
+      if (invoice.oldItems && invoice.oldItems.length > 0) {
         finalY += 8;
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(...goldColor);
-        doc.text("OLD PRODUCT EXCHANGE (LESS)", 14, finalY);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(10);
+        pdf.setTextColor(...goldColor);
+        pdf.text("OLD PRODUCT EXCHANGE (LESS)", 14, finalY);
 
-        autoTable(doc, {
+        autoTable(pdf, {
           startY: finalY + 2,
           head: [["Description", "Weight (g)", "Rate / g", "Amount"]],
           body: invoice.oldItems.map((item) => [
@@ -617,11 +703,12 @@ const Billing = () => {
             item.rate,
             formatCurrency(item.amount),
           ]),
-          theme: "plain",
+          theme: "grid",
           headStyles: {
-            fillColor: [240, 240, 240],
-            textColor: 0,
-            halign: "right",
+            fillColor: goldColor,
+            textColor: 255,
+            fontStyle: "bold",
+            halign: "center",
           },
           styles: { fontSize: 9 },
           columnStyles: {
@@ -631,147 +718,208 @@ const Billing = () => {
             3: { halign: "right", textColor: [200, 0, 0] },
           },
         });
-        finalY = doc.lastAutoTable.finalY;
+        finalY = pdf.lastAutoTable.finalY || finalY;
       }
 
-      // --- 5. TOTALS ---
       if (pageHeight - finalY < 85) {
-        doc.addPage();
+        pdf.addPage();
         finalY = 20;
       }
 
       finalY += 10;
 
-      doc.setFontSize(9);
-      doc.setTextColor(100);
-      doc.text("Amount in Words:", 14, finalY + 5);
-      doc.setFont("times", "italic");
-      doc.setTextColor(0);
-      doc.setFontSize(10);
-      doc.text(numberToWords(Math.round(invoice.grandTotal)), 14, finalY + 11, {
-        maxWidth: 70,
-      });
+      pdf.setFontSize(9);
+      pdf.setTextColor(100);
+      pdf.text("Amount in Words:", 14, finalY + 5);
+      pdf.setFont("times", "italic");
+      pdf.setTextColor(0);
+      pdf.setFontSize(10);
+      pdf.text(
+        numberToWords(Math.round(invoice.grandTotal || 0)),
+        14,
+        finalY + 11,
+        { maxWidth: 70 }
+      );
 
-      // FIXED: Box width increased so numbers don't overflow
       const boxWidth = 105;
       const summaryStartX = pageWidth - 15 - boxWidth;
       const valueX = pageWidth - 20;
       const lineHeight = 6.5;
 
-      doc.setDrawColor(230);
-      doc.setFillColor(...lightGold);
-      doc.roundedRect(summaryStartX, finalY - 2, boxWidth, 75, 2, 2, "F");
+      pdf.setDrawColor(230);
+      pdf.setFillColor(...lightGold);
+      pdf.roundedRect(summaryStartX, finalY - 2, boxWidth, 75, 2, 2, "F");
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
 
-      doc.text("Subtotal:", summaryStartX + 5, finalY + 5);
-      doc.text(formatCurrency(invoice.subTotal), valueX, finalY + 5, {
-        align: "right",
-      });
+      pdf.text("Subtotal:", summaryStartX + 5, finalY + 5);
+      pdf.text(
+        formatCurrency(invoice.subTotal),
+        valueX,
+        finalY + 5,
+        { align: "right" }
+      );
 
       if (invoice.discount > 0) {
-        doc.setTextColor(200, 0, 0);
-        doc.text("Discount:", summaryStartX + 5, finalY + 5 + lineHeight);
-        doc.text(
+        pdf.setTextColor(200, 0, 0);
+        pdf.text("Discount:", summaryStartX + 5, finalY + 5 + lineHeight);
+        pdf.text(
           `- ${formatCurrency(invoice.discount)}`,
           valueX,
           finalY + 5 + lineHeight,
           { align: "right" }
         );
-        doc.setTextColor(0);
+        pdf.setTextColor(0);
       }
 
-      doc.text("CGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 2);
-      doc.text(
+      pdf.text(
+        "CGST (9%):",
+        summaryStartX + 5,
+        finalY + 5 + lineHeight * 2
+      );
+      pdf.text(
         formatCurrency(invoice.cgst),
         valueX,
         finalY + 5 + lineHeight * 2,
         { align: "right" }
       );
 
-      doc.text("SGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 3);
-      doc.text(
+      pdf.text(
+        "SGST (9%):",
+        summaryStartX + 5,
+        finalY + 5 + lineHeight * 3
+      );
+      pdf.text(
         formatCurrency(invoice.sgst),
         valueX,
         finalY + 5 + lineHeight * 3,
         { align: "right" }
       );
 
-      doc.setDrawColor(200);
-      doc.line(
+      pdf.setDrawColor(200);
+      pdf.line(
         summaryStartX + 5,
         finalY + 5 + lineHeight * 4,
         valueX,
         finalY + 5 + lineHeight * 4
       );
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.setTextColor(...goldColor);
-      doc.text(
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(12);
+      pdf.setTextColor(...goldColor);
+      pdf.text(
         "GRAND TOTAL",
         summaryStartX + 5,
         finalY + 5 + lineHeight * 5 + 2
       );
-      doc.text(
+      pdf.text(
         formatCurrency(invoice.grandTotal),
         valueX,
         finalY + 5 + lineHeight * 5 + 2,
         { align: "right" }
       );
 
-      doc.setFontSize(10);
-      doc.setTextColor(0);
-      doc.setFont("helvetica", "normal");
-      doc.text("Received:", summaryStartX + 5, finalY + 5 + lineHeight * 6 + 4);
-      doc.text(
+      pdf.setFontSize(10);
+      pdf.setTextColor(0);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(
+        "Received:",
+        summaryStartX + 5,
+        finalY + 5 + lineHeight * 6 + 4
+      );
+      pdf.text(
         formatCurrency(invoice.receivedAmount),
         valueX,
         finalY + 5 + lineHeight * 6 + 4,
         { align: "right" }
       );
 
-      doc.setFont("helvetica", "bold");
-      doc.text(
+      pdf.setFont("helvetica", "bold");
+      pdf.text(
         "Balance Due:",
         summaryStartX + 5,
         finalY + 5 + lineHeight * 7 + 6
       );
-      const balanceColor = invoice.balanceDue > 0 ? [200, 0, 0] : [0, 128, 0];
-      doc.setTextColor(...balanceColor);
-      doc.text(
+      const balanceColor =
+        (invoice.balanceDue || 0) > 0 ? [200, 0, 0] : [0, 128, 0];
+      pdf.setTextColor(...balanceColor);
+      pdf.text(
         formatCurrency(invoice.balanceDue),
         valueX,
         finalY + 5 + lineHeight * 7 + 6,
         { align: "right" }
       );
+      pdf.setTextColor(0);
 
-      // --- FOOTER ---
+      // Payment history
+      const history = invoice.paymentHistory || [];
+      let paymentY = finalY + 5 + lineHeight * 9 + 10;
+
+      if (history.length > 0) {
+        if (pageHeight - paymentY < 40) {
+          pdf.addPage();
+          paymentY = 20;
+        }
+
+        pdf.setFontSize(10);
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(...goldColor);
+        pdf.text("Payment History", 14, paymentY);
+
+        pdf.setTextColor(0);
+        autoTable(pdf, {
+          startY: paymentY + 4,
+          head: [["Date & Time", "Mode", "Amount", "UTR / Txn ID", "Balance"]],
+          body: history.map((p) => [
+            p.date ? new Date(p.date).toLocaleString("en-GB") : "",
+            p.method || "",
+            formatCurrency(p.amount || 0),
+            p.utr || "",
+            formatCurrency(p.balanceAfter ?? 0),
+          ]),
+          theme: "grid",
+          headStyles: {
+            fillColor: goldColor,
+            textColor: 255,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          styles: { fontSize: 8 },
+          columnStyles: {
+            0: { cellWidth: 45 },
+            1: { cellWidth: 20 },
+            2: { cellWidth: 25, halign: "right" },
+            3: { cellWidth: 60 },
+            4: { cellWidth: 30, halign: "right" },
+          },
+        });
+      }
+
       const footerY = pageHeight - 30;
-      doc.setDrawColor(200);
-      doc.line(14, footerY, pageWidth - 14, footerY);
+      pdf.setDrawColor(200);
+      pdf.line(14, footerY, pageWidth - 14, footerY);
 
-      doc.setFontSize(8);
-      doc.setTextColor(120);
-      doc.setFont("helvetica", "normal");
-      doc.text(
+      pdf.setFontSize(8);
+      pdf.setTextColor(120);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(
         "TERMS: 1. Goods once sold will not be taken back. 2. Subject to local jurisdiction.",
         14,
         footerY + 5
       );
 
-      doc.setTextColor(0);
-      doc.setFontSize(9);
-      doc.text("Authorized Signatory", pageWidth - 15, pageHeight - 10, {
+      pdf.setTextColor(0);
+      pdf.setFontSize(9);
+      pdf.text("Authorized Signatory", pageWidth - 15, pageHeight - 10, {
         align: "right",
       });
 
-      const pdfBlob = doc.output("blob");
+      const pdfBlob = pdf.output("blob");
       const pdfUrl = URL.createObjectURL(pdfBlob);
 
       if (action === "download") {
-        doc.save(`Invoice_${invoice.id}.pdf`);
+        pdf.save(`Invoice_${invoice.invoiceNo || invoice.id}.pdf`);
       } else {
         window.open(pdfUrl, "_blank");
       }
@@ -783,14 +931,29 @@ const Billing = () => {
     }
   };
 
-  // --- Render UI ---
+  // Filter + pagination
   const filteredInvoices = useMemo(() => {
-    return invoices.filter(
-      (inv) =>
-        inv.customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        inv.id.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const term = searchTerm.toLowerCase();
+    return invoices.filter((inv) => {
+      const name = inv.customer?.name?.toLowerCase() || "";
+      const id = (inv.invoiceNo || inv.id || "").toLowerCase();
+      return name.includes(term) || id.includes(term);
+    });
   }, [invoices, searchTerm]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredInvoices.length / itemsPerPage)
+  );
+
+  const paginatedInvoices = useMemo(
+    () =>
+      filteredInvoices.slice(
+        (page - 1) * itemsPerPage,
+        page * itemsPerPage
+      ),
+    [filteredInvoices, page]
+  );
 
   const btnPrimary =
     "px-6 py-2.5 bg-gradient-to-r from-yellow-600 to-yellow-700 text-white font-bold rounded-lg shadow hover:shadow-lg transition-all flex items-center justify-center";
@@ -855,16 +1018,22 @@ const Billing = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-              {filteredInvoices.slice(0, 10).map((invoice) => (
-                <tr key={invoice.id} className="hover:bg-gray-50 transition">
-
+              {paginatedInvoices.map((invoice) => (
+                <tr
+                  key={invoice.invoiceNo || invoice.id}
+                  className="hover:bg-gray-50 transition"
+                >
                   <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
-                    {invoice.id}
+                    {invoice.invoiceNo || invoice.id}
                   </td>
 
                   <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
-                    <div className="font-bold">{invoice.customer.name}</div>
-                    <div className="text-xs text-gray-500">{invoice.date}</div>
+                    <div className="font-bold">
+                      {invoice.customer?.name || "-"}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {invoice.date} {invoice.time}
+                    </div>
                   </td>
 
                   <td className="px-6 py-4 font-bold text-gray-800 whitespace-nowrap">
@@ -876,9 +1045,9 @@ const Billing = () => {
                   </td>
 
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {invoice.balanceDue > 0 ? (
+                    {Number(invoice.balanceDue || 0) > 0 ? (
                       <span className="px-2 py-1 text-xs font-bold bg-red-100 text-red-700 rounded-full flex items-center w-max">
-                        <AlertCircle size={12} className="mr-1" /> Baaki:{" "}
+                        <AlertCircle size={12} className="mr-1" /> Due:{" "}
                         {formatCurrency(invoice.balanceDue)}
                       </span>
                     ) : (
@@ -888,16 +1057,15 @@ const Billing = () => {
                     )}
                   </td>
 
-                  {/* --- Action Buttons --- */}
                   <td className="px-6 py-4 text-right whitespace-nowrap flex justify-end gap-2">
-
-                    {/* EDIT BUTTON 🚀 */}
-                    <button
-                      onClick={() => handleEditInvoice(invoice)}
-                      className="text-gray-500 hover:text-purple-600 p-2"
-                    >
-                      <Pencil size={18} />
-                    </button>
+                    {Number(invoice.balanceDue || 0) > 0 && (
+                      <button
+                        onClick={() => setPaymentModal(invoice)}
+                        className="text-green-600 hover:text-green-800 p-2 text-xs font-semibold border border-green-600 rounded-full"
+                      >
+                        Pay Due
+                      </button>
+                    )}
 
                     <button
                       onClick={() => generatePDF(invoice, "view")}
@@ -929,11 +1097,46 @@ const Billing = () => {
                   </td>
                 </tr>
               ))}
+              {paginatedInvoices.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-6 py-6 text-center text-gray-400 text-sm"
+                  >
+                    No invoices found.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
+
+        {filteredInvoices.length > itemsPerPage && (
+          <div className="flex justify-between items-center px-4 py-3 border-t text-sm text-gray-600">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-3 py-1 rounded border disabled:opacity-50"
+            >
+              Prev
+            </button>
+            <span>
+              Page {page} of {totalPages}
+            </span>
+            <button
+              onClick={() =>
+                setPage((p) => Math.min(totalPages, p + 1))
+              }
+              disabled={page === totalPages}
+              className="px-3 py-1 rounded border disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
+      {/* New Invoice Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-2 md:p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden">
@@ -950,6 +1153,7 @@ const Billing = () => {
                 <X size={28} />
               </button>
             </div>
+
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-gray-50/50">
               <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
                 <h4 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
@@ -990,6 +1194,24 @@ const Billing = () => {
                     />
                   </div>
                   <div>
+                    <label className={labelStyle}>Invoice Date</label>
+                    <input
+                      type="date"
+                      className={inputStyle}
+                      value={invoiceDate}
+                      onChange={(e) => setInvoiceDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelStyle}>Invoice Time</label>
+                    <input
+                      type="time"
+                      className={inputStyle}
+                      value={invoiceTime}
+                      onChange={(e) => setInvoiceTime(e.target.value)}
+                    />
+                  </div>
+                  <div>
                     <label className={labelStyle}>Payment Mode</label>
                     <div className="relative">
                       <select
@@ -1008,6 +1230,20 @@ const Billing = () => {
                       />
                     </div>
                   </div>
+                  {paymentMode !== "Cash" && (
+                    <div>
+                      <label className={labelStyle}>
+                        Transaction ID / UTR
+                      </label>
+                      <input
+                        type="text"
+                        className={inputStyle}
+                        value={utr}
+                        onChange={(e) => setUtr(e.target.value)}
+                        placeholder="Enter UTR / Txn ID"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1021,8 +1257,10 @@ const Billing = () => {
                   onSubmit={handleAddNewItem}
                   className="grid grid-cols-2 md:grid-cols-12 gap-4 items-end bg-gray-50 p-4 rounded-lg border border-gray-200"
                 >
-                  {/* Product Name with searchable suggestions */}
-                  <div className="col-span-2 md:col-span-3 relative" ref={suggestionsRef}>
+                  <div
+                    className="col-span-2 md:col-span-3 relative"
+                    ref={suggestionsRef}
+                  >
                     <label className={labelStyle}>Product Name</label>
                     <input
                       type="text"
@@ -1039,9 +1277,9 @@ const Billing = () => {
                     />
                     {showSuggestions && suggestions.length > 0 && (
                       <ul className="absolute z-50 mt-1 w-full bg-white rounded-md shadow-lg max-h-44 overflow-auto border border-gray-200">
-                        {suggestions.map((s, i) => (
+                        {suggestions.map((s) => (
                           <li
-                            key={i}
+                            key={s.id}
                             className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex justify-between"
                             onClick={() => {
                               setItemName(s.name);
@@ -1140,9 +1378,13 @@ const Billing = () => {
                         {newItems.map((item, idx) => (
                           <tr key={idx}>
                             <td className="px-4 py-2 font-medium">{item.name}</td>
-                            <td className="px-4 py-2 text-right">{item.weight}</td>
+                            <td className="px-4 py-2 text-right">
+                              {item.weight}
+                            </td>
                             <td className="px-4 py-2 text-right">{item.rate}</td>
-                            <td className="px-4 py-2 text-right">{item.makingCharge}</td>
+                            <td className="px-4 py-2 text-right">
+                              {item.makingCharge}
+                            </td>
                             <td className="px-4 py-2 text-right font-bold">
                               {formatCurrency(item.amount)}
                             </td>
@@ -1263,6 +1505,7 @@ const Billing = () => {
                         className={`${inputStyle} border-green-400 bg-green-50`}
                         placeholder="0"
                         value={receivedAmount}
+                        max={grandTotal}
                         onChange={(e) => setReceivedAmount(e.target.value)}
                       />
                     </div>
@@ -1294,7 +1537,9 @@ const Billing = () => {
                         }`}
                     >
                       <span className="font-bold text-sm">
-                        {balanceDue > 0 ? "Balance Due (Baaki):" : "Fully Paid:"}
+                        {balanceDue > 0
+                          ? "Balance Due (Baaki):"
+                          : "Fully Paid:"}
                       </span>
                       <span className="font-bold text-lg">
                         {formatCurrency(balanceDue > 0 ? balanceDue : 0)}
@@ -1317,6 +1562,90 @@ const Billing = () => {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modal */}
+      {paymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-lg font-bold text-gray-800">
+                Add Payment - {paymentModal.invoiceNo || paymentModal.id}
+              </h3>
+              <button
+                onClick={() => setPaymentModal(null)}
+                className="text-gray-400 hover:text-red-500"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="text-sm text-gray-600 space-y-1 mb-3">
+              <div>
+                <span className="font-semibold">Customer: </span>
+                {paymentModal.customer?.name}
+              </div>
+              <div>
+                <span className="font-semibold">Current Due: </span>
+                {formatCurrency(paymentModal.balanceDue)}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className={labelStyle}>Pay Amount</label>
+                <input
+                  type="number"
+                  className={inputStyle}
+                  placeholder="Enter amount"
+                  value={payAmount}
+                  max={paymentModal?.balanceDue || undefined}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={labelStyle}>Payment Mode</label>
+                <select
+                  className={inputStyle}
+                  value={payMode}
+                  onChange={(e) => setPayMode(e.target.value)}
+                >
+                  <option>Cash</option>
+                  <option>UPI</option>
+                  <option>Card</option>
+                  <option>Bank Transfer</option>
+                </select>
+              </div>
+              {payMode !== "Cash" && (
+                <div>
+                  <label className={labelStyle}>UTR / Transaction ID</label>
+                  <input
+                    type="text"
+                    className={inputStyle}
+                    placeholder="Enter UTR / Txn ID"
+                    value={payUtr}
+                    onChange={(e) => setPayUtr(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                onClick={() => setPaymentModal(null)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddPayment}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-semibold flex items-center gap-1"
+              >
+                <CheckCircle size={16} /> Save Payment
+              </button>
             </div>
           </div>
         </div>

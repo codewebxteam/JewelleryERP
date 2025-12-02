@@ -22,11 +22,19 @@ import {
   TrendingUp,
   X as CloseIcon,
 } from "lucide-react";
+import { db } from "../firebase";
+import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 
 // Time Ago Helper
-const timeAgo = (dateString) => {
+const timeAgo = (dateValue) => {
+  if (!dateValue) return "-";
   const now = new Date();
-  const invoiceDate = new Date(dateString);
+
+  const invoiceDate =
+    dateValue && dateValue.seconds
+      ? new Date(dateValue.seconds * 1000)
+      : new Date(dateValue);
+
   const diff = (now - invoiceDate) / 1000;
 
   if (diff < 60) return "Just now";
@@ -36,20 +44,25 @@ const timeAgo = (dateString) => {
   return Math.floor(diff / 86400) + " days ago";
 };
 
+const ITEMS_PER_PAGE = 5;
+
 const Dashboard = () => {
-  // 🔥 Load invoices from localStorage
   const [invoices, setInvoices] = React.useState([]);
   const [modalType, setModalType] = React.useState(null); // which popup is open
+  const [currentPage, setCurrentPage] = React.useState(1);
 
   React.useEffect(() => {
-    const stored = localStorage.getItem("invoices");
-    if (stored) {
-      try {
-        setInvoices(JSON.parse(stored));
-      } catch {
-        setInvoices([]);
-      }
-    }
+    const ref = query(collection(db, "invoices"), orderBy("createdAt", "desc"));
+
+    const unsubscribe = onSnapshot(ref, (snapshot) => {
+      const data = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setInvoices(data);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Helpers
@@ -61,15 +74,24 @@ const Dashboard = () => {
     return isNaN(dt.getTime()) ? null : dt;
   };
 
+  // Prefer createdAt if available, else fall back to date string
+  const getInvoiceDate = (inv) => {
+    if (inv?.createdAt?.seconds) {
+      return new Date(inv.createdAt.seconds * 1000);
+    }
+    if (inv?.date) {
+      const dt = new Date(inv.date);
+      return isNaN(dt.getTime()) ? null : dt;
+    }
+    return null;
+  };
+
   // ====== CORE STATS FROM INVOICES ======
 
   // Total Sales (all time)
   const totalSales = React.useMemo(
     () =>
-      invoices.reduce(
-        (sum, inv) => sum + Number(inv.grandTotal || 0),
-        0
-      ),
+      invoices.reduce((sum, inv) => sum + Number(inv.grandTotal || 0), 0),
     [invoices]
   );
 
@@ -90,11 +112,18 @@ const Dashboard = () => {
   // Total Orders
   const totalOrders = invoices.length;
 
-  // Today invoices
+  // Today invoices -> based on createdAt (fallback to date)
   const todayInvoices = React.useMemo(
-    () => invoices.filter((inv) => inv.date === todayStr),
+    () =>
+      invoices.filter((inv) => {
+        const d = getInvoiceDate(inv);
+        if (!d) return false;
+        const dStr = d.toISOString().split("T")[0];
+        return dStr === todayStr;
+      }),
     [invoices, todayStr]
   );
+
   const todaySales = React.useMemo(
     () =>
       todayInvoices.reduce(
@@ -104,7 +133,7 @@ const Dashboard = () => {
     [todayInvoices]
   );
 
-  // Current Month Revenue
+  // Current Month Revenue (still uses date string for compatibility)
   const currentMonthRevenue = React.useMemo(() => {
     return invoices.reduce((sum, inv) => {
       const d = getValidDate(inv.date);
@@ -127,9 +156,10 @@ const Dashboard = () => {
     invoices.forEach((inv) => {
       const d = getValidDate(inv.date);
       if (!d) return;
-      const ymKey = `${d.getFullYear()}-${String(
-        d.getMonth() + 1
-      ).padStart(2, "0")}`;
+      const ymKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+        2,
+        "0"
+      )}`;
       const label = d.toLocaleString("en-IN", {
         month: "short",
         year: "2-digit",
@@ -192,13 +222,15 @@ const Dashboard = () => {
 
   const allInvoicesSorted = React.useMemo(
     () =>
-      [...invoices].sort(
-        (a, b) => new Date(b.date) - new Date(a.date)
-      ),
+      [...invoices].sort((a, b) => new Date(b.date) - new Date(a.date)),
     [invoices]
   );
 
-  const openModal = (type) => setModalType(type);
+  const openModal = (type) => {
+    setModalType(type);
+    setCurrentPage(1); // reset page every time modal opens
+  };
+
   const closeModal = () => setModalType(null);
 
   const formatCurrency = (val) =>
@@ -223,81 +255,117 @@ const Dashboard = () => {
     }
   };
 
-  const renderInvoiceTable = (list) => (
-    <div className="overflow-x-auto max-h-[60vh]">
-      <table className="min-w-full text-sm divide-y divide-gray-200">
-        <thead className="bg-gray-50">
-          <tr>
-            <th className="px-3 py-2 text-left font-medium text-gray-600">
-              Invoice
-            </th>
-            <th className="px-3 py-2 text-left font-medium text-gray-600">
-              Customer
-            </th>
-            <th className="px-3 py-2 text-left font-medium text-gray-600">
-              Date
-            </th>
-            <th className="px-3 py-2 text-right font-medium text-gray-600">
-              Total
-            </th>
-            <th className="px-3 py-2 text-right font-medium text-gray-600">
-              Received
-            </th>
-            <th className="px-3 py-2 text-right font-medium text-gray-600">
-              Balance
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100 bg-white">
-          {list.map((inv) => (
-            <tr key={inv.id} className="hover:bg-gray-50">
-              <td className="px-3 py-2 font-medium">{inv.id}</td>
-              <td className="px-3 py-2">
-                <div className="font-medium">
-                  {inv.customer?.name || "-"}
-                </div>
-                <div className="text-xs text-gray-500">
-                  {inv.customer?.contact || ""}
-                </div>
-              </td>
-              <td className="px-3 py-2 text-sm">
-                {inv.date || "-"}
-              </td>
-              <td className="px-3 py-2 text-right font-semibold">
-                {formatCurrency(inv.grandTotal)}
-              </td>
-              <td className="px-3 py-2 text-right text-green-700">
-                {formatCurrency(inv.receivedAmount)}
-              </td>
-              <td className="px-3 py-2 text-right">
-                {Number(inv.balanceDue || 0) > 0 ? (
-                  <span className="inline-flex items-center text-xs font-semibold text-red-700 bg-red-100 px-2 py-1 rounded-full">
-                    <AlertCircle size={12} className="mr-1" />
-                    {formatCurrency(inv.balanceDue)}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center text-xs font-semibold text-green-700 bg-green-100 px-2 py-1 rounded-full">
-                    <CheckCircle size={12} className="mr-1" />
-                    Paid
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-          {list.length === 0 && (
-            <tr>
-              <td
-                colSpan={6}
-                className="px-3 py-6 text-center text-gray-400 text-sm"
-              >
-                No records available.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+  // Pagination helper for invoice tables inside modals
+  const renderInvoiceTable = (list) => {
+    const totalPages = Math.max(
+      1,
+      Math.ceil((list?.length || 0) / ITEMS_PER_PAGE)
+    );
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    const pageData = list.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+    return (
+      <div>
+        <div className="overflow-x-auto max-h-[60vh]">
+          <table className="min-w-full text-sm divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">
+                  Invoice
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">
+                  Customer
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-gray-600">
+                  Date
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-gray-600">
+                  Total
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-gray-600">
+                  Received
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-gray-600">
+                  Balance
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white">
+              {pageData.map((inv) => (
+                <tr key={inv.invoiceNo} className="hover:bg-gray-50">
+                  <td className="px-3 py-2 font-medium">{inv.invoiceNo}</td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">
+                      {inv.customer?.name || "-"}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {inv.customer?.contact || ""}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-sm">
+                    {inv.date || "-"}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold">
+                    {formatCurrency(inv.grandTotal)}
+                  </td>
+                  <td className="px-3 py-2 text-right text-green-700">
+                    {formatCurrency(inv.receivedAmount)}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {Number(inv.balanceDue || 0) > 0 ? (
+                      <span className="inline-flex items-center text-xs font-semibold text-red-700 bg-red-100 px-2 py-1 rounded-full">
+                        <AlertCircle size={12} className="mr-1" />
+                        {formatCurrency(inv.balanceDue)}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center text-xs font-semibold text-green-700 bg-green-100 px-2 py-1 rounded-full">
+                        <CheckCircle size={12} className="mr-1" />
+                        Paid
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {list.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-3 py-6 text-center text-gray-400 text-sm"
+                  >
+                    No records available.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {list.length > ITEMS_PER_PAGE && (
+          <div className="flex items-center justify-between mt-3 text-sm">
+            <button
+              className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </button>
+            <span>
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              className="px-3 py-1 rounded bg-gray-100 disabled:opacity-50"
+              disabled={currentPage === totalPages}
+              onClick={() =>
+                setCurrentPage((p) => Math.min(totalPages, p + 1))
+              }
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderModalContent = () => {
     switch (modalType) {
@@ -399,7 +467,9 @@ const Dashboard = () => {
           <StatCard
             title="Pending Payments"
             value={formatCurrency(totalPendingAmount)}
-            change={pendingInvoices.length ? `${pendingInvoices.length} invoices` : ""}
+            change={
+              pendingInvoices.length ? `${pendingInvoices.length} invoices` : ""
+            }
             changeType="negative"
             icon={<AlertCircle size={22} />}
           />
@@ -427,7 +497,9 @@ const Dashboard = () => {
           <StatCard
             title="Today Sales"
             value={formatCurrency(todaySales)}
-            change={todayInvoices.length ? `${todayInvoices.length} invoices` : ""}
+            change={
+              todayInvoices.length ? `${todayInvoices.length} invoices` : ""
+            }
             changeType="positive"
             icon={<CalendarClock size={22} />}
           />
@@ -459,11 +531,7 @@ const Dashboard = () => {
                 ? `${topProducts[0].totalWeight.toFixed(2)} gm`
                 : "No data"
             }
-            change={
-              topProducts.length
-                ? topProducts[0].name
-                : ""
-            }
+            change={topProducts.length ? topProducts[0].name : ""}
             changeType="positive"
             icon={<Gem size={22} />}
           />
@@ -485,11 +553,7 @@ const Dashboard = () => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" stroke="#6b7280" />
                 <YAxis stroke="#6b7280" />
-                <Tooltip
-                  formatter={(value) =>
-                    formatCurrency(value)
-                  }
-                />
+                <Tooltip formatter={(value) => formatCurrency(value)} />
                 <Legend />
                 <Line
                   type="monotone"
@@ -530,10 +594,8 @@ const Dashboard = () => {
                       <p className="font-medium text-gray-800">
                         {product.name}
                       </p>
-                      {/* Total grams only (as you asked) */}
                       <p className="text-sm text-gray-500">
-                        Total Sold:{" "}
-                        {product.totalWeight.toFixed(2)} gm
+                        Total Sold: {product.totalWeight.toFixed(2)} gm
                       </p>
                     </div>
                   </div>
@@ -544,7 +606,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Recent Transactions (already invoices-based) */}
+      {/* Recent Transactions (already invoices-based, no pagination as per option B) */}
       <div className="bg-white p-4 sm:p-6 mb-50 rounded-lg shadow-lg border border-gray-200">
         <h3 className="flex items-center text-lg font-semibold text-gray-900 mb-4">
           <ListIcon size={22} className="mr-2 text-brand-gold" />
@@ -573,11 +635,11 @@ const Dashboard = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {invoices.slice(0, 6).map((tx) => (
                 <tr
-                  key={tx.id}
+                  key={tx.invoiceNo || tx.id}
                   className="hover:bg-gray-50 transition"
                 >
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap font-medium">
-                    {tx.id}
+                    {tx.invoiceNo || tx.id}
                   </td>
 
                   <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
@@ -585,7 +647,7 @@ const Dashboard = () => {
                       {tx.customer?.name || "-"}
                     </div>
                     <div className="text-xs text-gray-500">
-                      {timeAgo(tx.date)}
+                      {timeAgo(tx.createdAt || tx.date)}
                     </div>
                   </td>
 
@@ -602,8 +664,7 @@ const Dashboard = () => {
                     ) : (
                       <span className="flex items-center text-red-700 bg-red-100 px-3 py-1 rounded-full text-xs font-semibold w-max">
                         <AlertCircle size={14} className="mr-1" />
-                        Due:{" "}
-                        {formatCurrency(tx.balanceDue)}
+                        Due: {formatCurrency(tx.balanceDue)}
                       </span>
                     )}
                   </td>
@@ -641,9 +702,7 @@ const Dashboard = () => {
                 <CloseIcon size={22} />
               </button>
             </div>
-            <div className="p-4 overflow-hidden">
-              {renderModalContent()}
-            </div>
+            <div className="p-4 overflow-hidden">{renderModalContent()}</div>
           </div>
         </div>
       )}
