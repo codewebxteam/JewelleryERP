@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { UserCircle, LogOut, KeyRound, User } from "lucide-react";
 import logo from "../assets/logo.png";
 import { useNavigate } from "react-router-dom";
+import { signOut } from "firebase/auth";
+import { auth } from "../firebase";
 
 const Header = () => {
   const navigate = useNavigate();
@@ -21,8 +23,10 @@ const Header = () => {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const logout = () => {
-    localStorage.removeItem("token");
+  const logout = async () => {
+    await signOut(auth); 
+    localStorage.removeItem("auth");
+    localStorage.removeItem("userEmail");
     navigate("/login");
   };
 
@@ -48,7 +52,7 @@ const Header = () => {
 
         {/* DROPDOWN */}
         {open && (
-          <div className="absolute right-0 mt-2 w-44 bg-white border rounded shadow-md py-2">
+          <div className="absolute right-0 mt-2 w-44 bg-white border rounded shadow-md py-2 z-50">
             <button
               className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-gray-100 text-gray-700"
               onClick={() => navigate("/profile")}

@@ -10,6 +10,8 @@ import Billing from "./pages/Billing";
 import Girwi from "./pages/Girwi";
 import Stock from "./pages/Stock";
 import Reports from "./pages/Reports";
+import Profile from "./pages/Profile";
+import ResetPassword from "./pages/ResetPassword";
 
 function App() {
   return (
@@ -28,6 +30,8 @@ function App() {
         <Route path="/girwi" element={<Girwi />} />
         <Route path="/stock" element={<Stock />} />
         <Route path="/reports" element={<Reports />} />
+        <Route path="/profile" element={<Profile />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
       </Route>
     </Routes>
   );

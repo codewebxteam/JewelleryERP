@@ -1,35 +1,30 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "../firebase";
+import { useNavigate } from "react-router-dom";
 import logo from "../assets/logo.png";
 
 const SHOP_NAME = "Shree Ganesh Jewellery";
 
-function Login() {
+function ResetPassword() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e) => {
+  const handleReset = async (e) => {
     e.preventDefault();
+    setMessage("");
     setError("");
     setLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      // ✅ Save auth state
-      localStorage.setItem("auth", "true");
-      localStorage.setItem("userEmail", user.email);
-
-      navigate("/");
+      await sendPasswordResetEmail(auth, email);
+      setMessage(`Password reset email sent to ${email}`);
     } catch (err) {
       console.error(err);
-      setError("Invalid email or password");
+      setError("Failed to send reset email. Try again.");
     } finally {
       setLoading(false);
     }
@@ -41,15 +36,18 @@ function Login() {
         <div className="flex flex-col items-center mb-6">
           <img src={logo} alt="Logo" className="h-20 mb-3" />
           <h1 className="text-2xl font-bold text-gray-800 text-center">
-            {SHOP_NAME} Admin Login
+            {SHOP_NAME} Reset Password
           </h1>
         </div>
 
+        {message && (
+          <p className="text-green-600 text-sm text-center mb-3">{message}</p>
+        )}
         {error && (
           <p className="text-red-500 text-sm text-center mb-3">{error}</p>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleReset} className="space-y-4">
           <div>
             <label className="block mb-1 text-sm font-medium text-gray-700">
               Email
@@ -63,19 +61,6 @@ function Login() {
             />
           </div>
 
-          <div>
-            <label className="block mb-1 text-sm font-medium text-gray-700">
-              Password
-            </label>
-            <input
-              type="password"
-              className="w-full border rounded p-2 shadow-sm focus:ring-2 focus:ring-yellow-400"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
-
           <button
             type="submit"
             disabled={loading}
@@ -83,12 +68,19 @@ function Login() {
               loading ? "opacity-50 cursor-not-allowed" : ""
             }`}
           >
-            {loading ? "Logging in..." : "Login"}
+            {loading ? "Sending..." : "Send Reset Email"}
           </button>
         </form>
+
+        <button
+          onClick={() => navigate(-1)}
+          className="mt-4 w-full py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400"
+        >
+          Go Back
+        </button>
       </div>
     </div>
   );
 }
 
-export default Login;
+export default ResetPassword;

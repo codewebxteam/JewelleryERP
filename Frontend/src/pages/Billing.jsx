@@ -1,3 +1,6 @@
+// Billing.jsx
+// ✅ Added Optional IGST (18%) – Bill Level
+
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -27,6 +30,7 @@ import {
 // --- Configuration ---
 const CGST_RATE = 0.09;
 const SGST_RATE = 0.09;
+const IGST_RATE = 0.18;
 
 // --- Helpers ---
 const formatCurrency = (amount) =>
@@ -158,6 +162,9 @@ const Billing = () => {
   const [discount, setDiscount] = useState("");
   const [receivedAmount, setReceivedAmount] = useState("");
 
+  // ✅ NEW: IGST Toggle
+  const [isIGSTEnabled, setIsIGSTEnabled] = useState(false);
+
   // --- New Item Input State ---
   const [itemName, setItemName] = useState("");
   const [itemHsn, setItemHsn] = useState("7113");
@@ -234,9 +241,15 @@ const Billing = () => {
 
   const cgst = useMemo(() => taxableAmount * CGST_RATE, [taxableAmount]);
   const sgst = useMemo(() => taxableAmount * SGST_RATE, [taxableAmount]);
+
+  // ✅ NEW: IGST Calculation
+  const igstAmount = useMemo(() => {
+    return isIGSTEnabled ? taxableAmount * IGST_RATE : 0;
+  }, [taxableAmount, isIGSTEnabled]);
+
   const grandTotal = useMemo(
-    () => Math.round(taxableAmount + cgst + sgst),
-    [taxableAmount, cgst, sgst]
+    () => Math.round(taxableAmount + cgst + sgst + igstAmount),
+    [taxableAmount, cgst, sgst, igstAmount]
   );
 
   const balanceDue = useMemo(() => {
@@ -383,7 +396,6 @@ const Billing = () => {
 
     const receivedNum = Number(receivedAmount || 0);
 
-    // 🛑 NEW: extra payment block on NEW BILL
     if (receivedNum > grandTotal) {
       alert(
         `Allowed Payment Limit: ${formatCurrency(grandTotal)}\n` +
@@ -432,6 +444,8 @@ const Billing = () => {
       taxableAmount,
       cgst,
       sgst,
+      igstAmount,
+      isIGSTEnabled,
       grandTotal,
       paymentHistory: initialHistory,
     };
@@ -461,6 +475,7 @@ const Billing = () => {
     setInvoiceTime("");
     setPaymentMode("Cash");
     setUtr("");
+    setIsIGSTEnabled(false);
 
     setItemName("");
     setItemHsn("7113");
@@ -488,7 +503,6 @@ const Billing = () => {
 
     const currentDue = Number(paymentModal.balanceDue || 0);
 
-    // 🛑 NEW: Hard block – no extra payment
     if (amountNum > currentDue) {
       alert(
         `Allowed Payment Limit: ${formatCurrency(currentDue)}\n` +
@@ -531,7 +545,6 @@ const Billing = () => {
     setPayMode("Cash");
     setPayUtr("");
   };
-
 
   // --- GENERATE PDF ---
   const generatePDF = async (invoice, action = "view") => {
@@ -633,11 +646,6 @@ const Billing = () => {
 
       pdf.text("Time:", rightColX, yPos + 12);
       pdf.text(invoice.time || "-", pageWidth - 15, yPos + 12, {
-        align: "right",
-      });
-
-      pdf.text("Mode:", rightColX, yPos + 18);
-      pdf.text(invoice.paymentMode || "-", pageWidth - 15, yPos + 18, {
         align: "right",
       });
 
@@ -797,12 +805,27 @@ const Billing = () => {
         { align: "right" }
       );
 
+      // ✅ IGST in PDF
+      if (invoice.igstAmount > 0) {
+        pdf.text(
+          "IGST (18%):",
+          summaryStartX + 5,
+          finalY + 5 + lineHeight * 4
+        );
+        pdf.text(
+          formatCurrency(invoice.igstAmount),
+          valueX,
+          finalY + 5 + lineHeight * 4,
+          { align: "right" }
+        );
+      }
+
       pdf.setDrawColor(200);
       pdf.line(
         summaryStartX + 5,
-        finalY + 5 + lineHeight * 4,
+        finalY + 5 + lineHeight * 5,
         valueX,
-        finalY + 5 + lineHeight * 4
+        finalY + 5 + lineHeight * 5
       );
 
       pdf.setFont("helvetica", "bold");
@@ -811,12 +834,12 @@ const Billing = () => {
       pdf.text(
         "GRAND TOTAL",
         summaryStartX + 5,
-        finalY + 5 + lineHeight * 5 + 2
+        finalY + 5 + lineHeight * 6 + 2
       );
       pdf.text(
         formatCurrency(invoice.grandTotal),
         valueX,
-        finalY + 5 + lineHeight * 5 + 2,
+        finalY + 5 + lineHeight * 6 + 2,
         { align: "right" }
       );
 
@@ -826,12 +849,12 @@ const Billing = () => {
       pdf.text(
         "Received:",
         summaryStartX + 5,
-        finalY + 5 + lineHeight * 6 + 4
+        finalY + 5 + lineHeight * 7 + 4
       );
       pdf.text(
         formatCurrency(invoice.receivedAmount),
         valueX,
-        finalY + 5 + lineHeight * 6 + 4,
+        finalY + 5 + lineHeight * 7 + 4,
         { align: "right" }
       );
 
@@ -839,7 +862,7 @@ const Billing = () => {
       pdf.text(
         "Balance Due:",
         summaryStartX + 5,
-        finalY + 5 + lineHeight * 7 + 6
+        finalY + 5 + lineHeight * 8 + 6
       );
       const balanceColor =
         (invoice.balanceDue || 0) > 0 ? [200, 0, 0] : [0, 128, 0];
@@ -847,14 +870,14 @@ const Billing = () => {
       pdf.text(
         formatCurrency(invoice.balanceDue),
         valueX,
-        finalY + 5 + lineHeight * 7 + 6,
+        finalY + 5 + lineHeight * 8 + 6,
         { align: "right" }
       );
       pdf.setTextColor(0);
 
       // Payment history
       const history = invoice.paymentHistory || [];
-      let paymentY = finalY + 5 + lineHeight * 9 + 10;
+      let paymentY = finalY + 5 + lineHeight * 10 + 10;
 
       if (history.length > 0) {
         if (pageHeight - paymentY < 40) {
@@ -1244,6 +1267,18 @@ const Billing = () => {
                       />
                     </div>
                   )}
+                  {/* ✅ IGST Toggle */}
+                  <div className="col-span-1 md:col-span-3">
+                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={isIGSTEnabled}
+                        onChange={(e) => setIsIGSTEnabled(e.target.checked)}
+                        className="w-4 h-4 accent-yellow-600"
+                      />
+                      Add IGST (18%)
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -1522,9 +1557,20 @@ const Billing = () => {
                       </div>
                     )}
                     <div className="flex justify-between text-gray-500 text-xs">
-                      <span>Tax (18%):</span>{" "}
-                      <span>{formatCurrency(cgst + sgst)}</span>
+                      <span>CGST (9%):</span>{" "}
+                      <span>{formatCurrency(cgst)}</span>
                     </div>
+                    <div className="flex justify-between text-gray-500 text-xs">
+                      <span>SGST (9%):</span>{" "}
+                      <span>{formatCurrency(sgst)}</span>
+                    </div>
+                    {/* ✅ IGST in UI */}
+                    {isIGSTEnabled && (
+                      <div className="flex justify-between text-gray-500 text-xs">
+                        <span>IGST (18%):</span>{" "}
+                        <span>{formatCurrency(igstAmount)}</span>
+                      </div>
+                    )}
                     <div className="h-px bg-gray-200 my-1"></div>
                     <div className="flex justify-between text-xl font-bold text-gray-800">
                       <span>Grand Total:</span>{" "}
