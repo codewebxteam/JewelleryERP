@@ -25,6 +25,10 @@ import {
   onSnapshot,
   updateDoc,
   doc,
+  getDocs,
+  query,
+  orderBy,
+  limit,
 } from "firebase/firestore";
 
 // --- Configuration ---
@@ -409,7 +413,34 @@ const Billing = () => {
       return;
     }
 
-    const finalInvoiceNo = invoiceNo || `INV-${Date.now()}`;
+    // Generate Financial Year from Invoice Date
+    const invoiceDateObj = new Date(invoiceDate);
+    const year = invoiceDateObj.getFullYear();
+    const month = invoiceDateObj.getMonth() + 1; // Month is 0-indexed
+
+    let financialYear;
+    if (month >= 4) {
+      financialYear = `${year}-${(year + 1).toString().slice(2)}`;
+    } else {
+      financialYear = `${year - 1}-${year.toString().slice(2)}`;
+    }
+
+    // Fetch the last invoice number from the database
+    const invoicesSnapshot = await getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc"), limit(1)));
+    let lastInvoiceNo = "SLJ" + financialYear + "-0000";
+    if (!invoicesSnapshot.empty) {
+      const lastInvoice = invoicesSnapshot.docs[0].data();
+      const lastInvoiceNoParts = lastInvoice.invoiceNo.match(/SLJ(\d{4}-\d{2})-(\d{4})/);
+      if (lastInvoiceNoParts) {
+        const lastYear = lastInvoiceNoParts[1];
+        const lastNumber = parseInt(lastInvoiceNoParts[2], 10);
+        if (lastYear === financialYear) {
+          lastInvoiceNo = `SLJ${financialYear}-${String(lastNumber + 1).padStart(4, '0')}`;
+        } else {
+          lastInvoiceNo = `SLJ${financialYear}-0001`;
+        }
+      }
+    }
 
     const balance = grandTotal - receivedNum;
     const safeBalance = balance > 0 ? balance : 0;
@@ -428,7 +459,7 @@ const Billing = () => {
         : [];
 
     const invoicePayload = {
-      invoiceNo: finalInvoiceNo,
+      invoiceNo: lastInvoiceNo,
       date: invoiceDate,
       time: invoiceTime,
       customer,
@@ -463,8 +494,6 @@ const Billing = () => {
       console.error(err);
       alert("❌ Saving Error! Check console.");
     }
-
-    setInvoiceNo(null);
 
     setCustomer({ name: "", address: "", contact: "" });
     setNewItems([]);

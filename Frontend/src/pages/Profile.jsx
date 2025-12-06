@@ -8,7 +8,7 @@ const Profile = () => {
   const admin = {
     name: "Admin User",
     email: "admin@example.com",
-    shop: "Shree Ganesh Jewellery",
+    shop: "Shree Laxmi Jewellers and Sons",
   };
 
   return (
