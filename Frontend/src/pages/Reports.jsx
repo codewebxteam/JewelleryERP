@@ -260,6 +260,23 @@ const Reports = () => {
     saveAs(blob, filename);
   };
 
+  const exportJSON = () => {
+    if (!reportData.length) {
+      alert("No data to export!");
+      return;
+    }
+
+    const filename = `${reportType}_report_${new Date()
+      .toISOString()
+      .split("T")[0]}.json`;
+
+    const jsonString = JSON.stringify(reportData, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json" });
+
+    saveAs(blob, filename);
+  };
+
+
   const handleTabChange = (type) => {
     setReportType(type);
     setCurrentPage(1);
@@ -296,11 +313,10 @@ const Reports = () => {
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition font-semibold ${
-              reportType === tab.id
-                ? "bg-yellow-600 text-white"
-                : "bg-gray-200 text-gray-700"
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition font-semibold ${reportType === tab.id
+              ? "bg-yellow-600 text-white"
+              : "bg-gray-200 text-gray-700"
+              }`}
           >
             <tab.icon size={18} />
             {tab.label}
@@ -473,13 +489,24 @@ const Reports = () => {
           <p className="text-sm text-gray-500">
             Showing {paginatedData.length} of {reportData.length} records
           </p>
-          <button
-            onClick={exportExcel}
-            className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm mb-1"
-          >
-            <Download size={16} />
-            Export Excel
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={exportExcel}
+              className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm mb-1"
+            >
+              <Download size={16} />
+              Export Excel
+            </button>
+
+            <button
+              onClick={exportJSON}
+              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm mb-1"
+            >
+              <Download size={16} />
+              Export JSON
+            </button>
+          </div>
+
         </div>
 
         <div className="overflow-x-auto">
