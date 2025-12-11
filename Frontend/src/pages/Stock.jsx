@@ -27,6 +27,7 @@ const Stock = () => {
     hsnCode: "",
     huid: "",
     totalWeight: "",
+    stockType: "",
   });
 
   const productNames = [
@@ -75,6 +76,7 @@ const Stock = () => {
       hsnCode: "",
       huid: "",
       totalWeight: "",
+      stockType: "",
     });
   };
 
@@ -93,7 +95,9 @@ const Stock = () => {
       hsnCode: item.hsnCode || "",
       huid: item.huid || "",
       totalWeight: item.totalWeight || "",
+      stockType: item.stockType || "", 
     });
+
   };
 
   const closeModal = () => {
@@ -141,6 +145,7 @@ const Stock = () => {
         hsnCode: formData.hsnCode,
         huid: formData.huid,
         totalWeight: finalWeight,
+        stockType: formData.stockType,
       });
     } else {
       await addDoc(collection(db, "jewellery_stock"), {
@@ -149,6 +154,7 @@ const Stock = () => {
         hsnCode: formData.hsnCode,
         huid: formData.huid,
         totalWeight: finalWeight,
+        stockType: formData.stockType,
         createdAt: new Date(),
       });
     }
@@ -312,6 +318,19 @@ const Stock = () => {
                 value={formData.totalWeight}
                 onChange={handleFormChange}
               />
+
+              <select
+                name="stockType"
+                required
+                className="input"
+                value={formData.stockType}
+                onChange={handleFormChange}
+              >
+                <option value="">Select Stock Type</option>
+                <option value="white">White (GST Paid)</option>
+                <option value="black">Black (No GST)</option>
+              </select>
+
 
               <button className="bg-yellow-700 text-white w-full py-2 rounded-lg font-bold hover:bg-yellow-800 flex justify-center">
                 <Package className="mr-2" /> Save

@@ -1,6 +1,5 @@
 // Billing.jsx
-// ✅ Added Optional IGST (18%) – Bill Level
-
+// ✅ IGST toggle + White-only taxable implementation
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -177,6 +176,9 @@ const Billing = () => {
   const [itemRate, setItemRate] = useState("");
   const [itemMaking, setItemMaking] = useState("");
 
+  // NEW: Item selected stockType (white/black) from suggestions
+  const [itemStockType, setItemStockType] = useState("");
+
   // --- Old Item Exchange State ---
   const [oldItemName, setOldItemName] = useState("");
   const [oldItemWeight, setOldItemWeight] = useState("");
@@ -238,6 +240,8 @@ const Billing = () => {
     return val > 0 ? val : 0;
   }, [newItemsTotal, oldItemsTotal]);
 
+
+  // taxableAmount should be computed based on WHITE items only (minus discount)
   const taxableAmount = useMemo(() => {
     const val = subTotal - Number(discount || 0);
     return val > 0 ? val : 0;
@@ -246,14 +250,14 @@ const Billing = () => {
   const cgst = useMemo(() => taxableAmount * CGST_RATE, [taxableAmount]);
   const sgst = useMemo(() => taxableAmount * SGST_RATE, [taxableAmount]);
 
-  // ✅ NEW: IGST Calculation
+  // ✅ NEW: IGST Calculation (on same taxableAmount)
   const igstAmount = useMemo(() => {
     return isIGSTEnabled ? taxableAmount * IGST_RATE : 0;
   }, [taxableAmount, isIGSTEnabled]);
 
   const grandTotal = useMemo(
     () => Math.round(taxableAmount + cgst + sgst + igstAmount),
-    [taxableAmount, cgst, sgst, igstAmount]
+    [taxableAmount, cgst, sgst, igstAmount, subTotal,]
   );
 
   const balanceDue = useMemo(() => {
@@ -313,10 +317,12 @@ const Billing = () => {
       hsn: itemHsn,
       huc: itemHuc,
       amount,
+      stockType: itemStockType || (selectedStockItem?.stockType || "white"),
     };
 
     setNewItems((prev) => [...prev, newItem]);
 
+    // reset item fields
     setItemName("");
     setProductQuery("");
     setItemHsn("7113");
@@ -324,6 +330,7 @@ const Billing = () => {
     setItemWeight("");
     setItemRate("");
     setItemMaking("");
+    setItemStockType("");
     setSuggestions([]);
     setShowSuggestions(false);
   };
@@ -363,27 +370,45 @@ const Billing = () => {
     setOldItems((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Update stock after saving invoice:
+  // Prefer deducting from inventory item that matches stockType first.
   const updateStockFromInvoice = async (invoice) => {
     for (const sold of invoice.newItems) {
-      const match = stockInventory.find(
+      // First try to find exact match which also has same stockType
+      let match = stockInventory.find(
         (s) =>
           s.name === sold.name &&
           (s.hsnCode || s.hsn || "") === (sold.hsn || "") &&
-          (s.huid || s.huc || "") === (sold.huc || "")
+          (s.huid || s.huc || "") === (sold.huc || "") &&
+          (s.stockType || "white") === (sold.stockType || "white")
       );
+
+      // Fallback: find any match ignoring stockType
+      if (!match) {
+        match = stockInventory.find(
+          (s) =>
+            s.name === sold.name &&
+            (s.hsnCode || s.hsn || "") === (sold.hsn || "") &&
+            (s.huid || s.huc || "") === (sold.huc || "")
+        );
+      }
 
       if (!match) continue;
 
       let newTotal = Number((match.totalWeight - sold.weight).toFixed(2));
       if (newTotal < 0) newTotal = 0;
 
-      await updateDoc(doc(db, "jewellery_stock", match.id), {
-        totalWeight: newTotal,
-        quantity:
-          newTotal > 0
-            ? Number((newTotal / (match.weight || 1)).toFixed(2))
-            : 0,
-      });
+      try {
+        await updateDoc(doc(db, "jewellery_stock", match.id), {
+          totalWeight: newTotal,
+          quantity:
+            newTotal > 0
+              ? Number((newTotal / (match.weight || 1)).toFixed(2))
+              : 0,
+        });
+      } catch (err) {
+        console.error("Stock update error:", err);
+      }
     }
   };
 
@@ -426,16 +451,23 @@ const Billing = () => {
     }
 
     // Fetch the last invoice number from the database
-    const invoicesSnapshot = await getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc"), limit(1)));
+    const invoicesSnapshot = await getDocs(
+      query(collection(db, "invoices"), orderBy("createdAt", "desc"), limit(1))
+    );
     let lastInvoiceNo = "SLJ" + financialYear + "-0000";
     if (!invoicesSnapshot.empty) {
       const lastInvoice = invoicesSnapshot.docs[0].data();
-      const lastInvoiceNoParts = lastInvoice.invoiceNo.match(/SLJ(\d{4}-\d{2})-(\d{4})/);
+      const lastInvoiceNoParts = lastInvoice.invoiceNo.match(
+        /SLJ(\d{4}-\d{2})-(\d{4})/
+      );
       if (lastInvoiceNoParts) {
         const lastYear = lastInvoiceNoParts[1];
         const lastNumber = parseInt(lastInvoiceNoParts[2], 10);
         if (lastYear === financialYear) {
-          lastInvoiceNo = `SLJ${financialYear}-${String(lastNumber + 1).padStart(4, '0')}`;
+          lastInvoiceNo = `SLJ${financialYear}-${String(lastNumber + 1).padStart(
+            4,
+            "0"
+          )}`;
         } else {
           lastInvoiceNo = `SLJ${financialYear}-0001`;
         }
@@ -479,7 +511,9 @@ const Billing = () => {
       isIGSTEnabled,
       grandTotal,
       paymentHistory: initialHistory,
+      stockType: newItems.some(i => i.stockType === "black") ? "black" : "white",
     };
+
 
     try {
       await addDoc(collection(db, "invoices"), {
@@ -495,6 +529,7 @@ const Billing = () => {
       alert("❌ Saving Error! Check console.");
     }
 
+    // RESET FORM
     setCustomer({ name: "", address: "", contact: "" });
     setNewItems([]);
     setOldItems([]);
@@ -512,6 +547,7 @@ const Billing = () => {
     setItemWeight("");
     setItemRate("");
     setItemMaking("");
+    setItemStockType("");
 
     setIsModalOpen(false);
   };
@@ -1346,10 +1382,12 @@ const Billing = () => {
                             key={s.id}
                             className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex justify-between"
                             onClick={() => {
+                              // IMPORTANT: set itemStockType from selected stock
                               setItemName(s.name);
                               setProductQuery(s.name);
                               setItemHsn(s.hsnCode || itemHsn);
                               setItemHuc(s.huid || "");
+                              setItemStockType(s.stockType || "white"); // <-- NEW
                               setShowSuggestions(false);
                             }}
                           >
@@ -1415,6 +1453,20 @@ const Billing = () => {
                     />
                   </div>
 
+                  {/* Optional: show current selected stockType for clarity */}
+                  <div className="col-span-2 md:col-span-1">
+                    <label className={labelStyle}>Stock Type</label>
+                    <select
+                      className={inputStyle}
+                      value={itemStockType}
+                      onChange={(e) => setItemStockType(e.target.value)}
+                    >
+                      <option value="">Auto</option>
+                      <option value="white">White (GST)</option>
+                      <option value="black">Black (No GST)</option>
+                    </select>
+                  </div>
+
                   <div className="col-span-2 md:col-span-1">
                     <button
                       type="submit"
@@ -1435,6 +1487,7 @@ const Billing = () => {
                           <th className="px-4 py-2 text-right">Rate</th>
                           <th className="px-4 py-2 text-right">Making</th>
                           <th className="px-4 py-2 text-right">Total</th>
+                          <th className="px-4 py-2 text-right">Type</th>
                           <th className="px-4 py-2"></th>
                         </tr>
                       </thead>
@@ -1451,6 +1504,11 @@ const Billing = () => {
                             </td>
                             <td className="px-4 py-2 text-right font-bold">
                               {formatCurrency(item.amount)}
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              <span className="text-xs px-2 py-1 rounded bg-gray-100">
+                                {item.stockType || "white"}
+                              </span>
                             </td>
                             <td className="px-4 py-2 text-right">
                               <button
@@ -1612,9 +1670,7 @@ const Billing = () => {
                         }`}
                     >
                       <span className="font-bold text-sm">
-                        {balanceDue > 0
-                          ? "Balance Due (Baaki):"
-                          : "Fully Paid:"}
+                        {balanceDue > 0 ? "Balance Due (Baaki):" : "Fully Paid:"}
                       </span>
                       <span className="font-bold text-lg">
                         {formatCurrency(balanceDue > 0 ? balanceDue : 0)}

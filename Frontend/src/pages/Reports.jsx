@@ -113,6 +113,21 @@ const applyFilters = (data, type, filters) => {
     });
   }
 
+  // 🔥 STOCK TYPE Filtering
+  if (filters.stockType && filters.stockType !== "all") {
+    filtered = filtered.filter((item) => {
+      if (type === "stock") {
+        return item.stockType === filters.stockType;
+      }
+
+      if (type === "sales") {
+        return item.stockType === filters.stockType;
+      }
+
+      return true;
+    });
+  }
+
   return filtered;
 };
 
@@ -167,6 +182,7 @@ const Reports = () => {
     dateFrom: "",
     dateTo: "",
     search: "",
+    stockType: "all",
   });
 
   const [showFilters, setShowFilters] = useState(true);
@@ -387,6 +403,26 @@ const Reports = () => {
               className="border px-2 py-1 rounded-md text-sm"
             />
           </div>
+
+          {/* Stock Type Filter */}
+          <div className="flex flex-col">
+            <span className="text-xs text-gray-500 font-semibold mb-1">
+              Stock Type
+            </span>
+            <select
+              value={filters.stockType}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, stockType: e.target.value }))
+              }
+              className="border px-2 py-1 rounded-md text-sm"
+            >
+              <option value="all">All</option>
+              <option value="white">White (GST + White Stock)</option>
+              <option value="black">Black (No GST Stock)</option>
+            </select>
+          </div>
+
+
 
           {/* Clear Filters */}
           <div className="flex items-end">
