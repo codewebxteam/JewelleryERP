@@ -1,5 +1,5 @@
 import React from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import MainLayout from "./components/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -16,8 +16,10 @@ import ResetPassword from "./pages/ResetPassword";
 function App() {
   return (
     <Routes>
+      {/* 1. Login Route */}
       <Route path="/login" element={<Login />} />
 
+      {/* 2. Protected Routes (Bina login ke ye nahi khulenge) */}
       <Route
         element={
           <ProtectedRoute>
@@ -33,6 +35,9 @@ function App() {
         <Route path="/profile" element={<Profile />} />
         <Route path="/reset-password" element={<ResetPassword />} />
       </Route>
+
+      {/* 3. Galat URL handle karne ke liye */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

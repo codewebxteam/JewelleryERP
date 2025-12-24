@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { auth } from "../firebase";
 import logo from "../assets/logo.webp";
 
@@ -11,7 +11,18 @@ function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Shuru mein loading true rakho
+
+  // ✅ Check: Agar user pehle se logged in hai, to Dashboard bhej do
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        navigate("/"); // Redirect to Dashboard
+      }
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -19,21 +30,22 @@ function Login() {
     setLoading(true);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      // ✅ Save auth state
-      localStorage.setItem("auth", "true");
-      localStorage.setItem("userEmail", user.email);
-
+      await signInWithEmailAndPassword(auth, email, password);
       navigate("/");
     } catch (err) {
       console.error(err);
       setError("Invalid email or password");
-    } finally {
       setLoading(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-screen">
+        Loading...
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-yellow-50 to-white p-4">
