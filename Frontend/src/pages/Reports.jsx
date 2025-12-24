@@ -7,6 +7,7 @@ import {
   Filter,
   Download,
   FileJson, // GST Icon
+  Gem,
 } from "lucide-react";
 import {
   PieChart,
@@ -81,11 +82,11 @@ const getItemDateString = (item, type) => {
   return null;
 };
 
-// Apply filters based on search + month + date range
+// Apply filters based on search + month + date range + StockType + JewelleryType
 const applyFilters = (data, type, filters) => {
   let filtered = [...data];
 
-  // 🔎 Search (on full JSON)
+  // 1. 🔎 Search (on full JSON)
   if (filters.search) {
     const q = filters.search.toLowerCase();
     filtered = filtered.filter((item) =>
@@ -93,7 +94,7 @@ const applyFilters = (data, type, filters) => {
     );
   }
 
-  // 🗓 Month (yyyy-mm)
+  // 2. 🗓 Month (yyyy-mm)
   if (filters.month) {
     filtered = filtered.filter((item) => {
       const d = getItemDateString(item, type);
@@ -102,7 +103,7 @@ const applyFilters = (data, type, filters) => {
     });
   }
 
-  // 🗓 Date From/To
+  // 3. 🗓 Date From/To
   if (filters.dateFrom) {
     const from = new Date(filters.dateFrom);
     filtered = filtered.filter((item) => {
@@ -121,15 +122,43 @@ const applyFilters = (data, type, filters) => {
     });
   }
 
-  // 🔥 STOCK TYPE Filtering
+  // 4. 🔥 STOCK TYPE Filtering (White/Black)
   if (filters.stockType && filters.stockType !== "all") {
     filtered = filtered.filter((item) => {
-      if (type === "stock") {
+      if (type === "stock" || type === "sales") {
         return item.stockType === filters.stockType;
       }
+      return true;
+    });
+  }
 
+  // 5. 💎 JEWELLERY TYPE Filtering (Gold/Silver/Other)
+  if (filters.jewelleryType && filters.jewelleryType !== "all") {
+    const filterVal = filters.jewelleryType.toLowerCase();
+
+    filtered = filtered.filter((item) => {
+      // Logic for Stock
+      if (type === "stock") {
+        return (item.category || "").toLowerCase() === filterVal;
+      }
+
+      // Logic for Girwi (Search in Description)
+      if (type === "girwi") {
+        const desc = (
+          item.itemDescription ||
+          item.description ||
+          ""
+        ).toLowerCase();
+        return desc.includes(filterVal);
+      }
+
+      // Logic for Sales (Search inside items array)
       if (type === "sales") {
-        return item.stockType === filters.stockType;
+        return item.newItems?.some(
+          (prod) =>
+            (prod.name || "").toLowerCase().includes(filterVal) ||
+            (prod.category || "").toLowerCase() === filterVal
+        );
       }
 
       return true;
@@ -157,6 +186,7 @@ const mapExportData = (data, type) => {
     return data.map((i) => ({
       SKU: i.sku || "",
       Name: i.name || "",
+      Category: i.category || "",
       HSN: i.hsnCode || "",
       HUID: i.huid || "",
       TotalWeight: i.totalWeight || 0,
@@ -166,7 +196,8 @@ const mapExportData = (data, type) => {
   // girwi
   return data.map((i) => ({
     GirviNumber: i.girviNumber || "",
-    Customer: i.customerName || i.customer?.name || "",
+    Customer: i.customerName || i.customer?.name || i.name || "",
+    Item: i.itemDescription || "",
     Weight: i.weight || 0,
     StartDate: i.startDate || "",
     Status: i.status || "",
@@ -185,12 +216,14 @@ const Reports = () => {
   const [chartData, setChartData] = useState([]);
   const [reportData, setReportData] = useState([]);
 
+  // ✅ Updated Filters State
   const [filters, setFilters] = useState({
     month: "",
     dateFrom: "",
     dateTo: "",
     search: "",
     stockType: "all",
+    jewelleryType: "all", // New Filter
   });
 
   const [showFilters, setShowFilters] = useState(true);
@@ -300,9 +333,7 @@ const Reports = () => {
     saveAs(blob, filename);
   };
 
-  // ==========================================================
-  // ⚡ 100% GST COMPLIANT JSON EXPORT LOGIC (TALLY STYLE)
-  // ==========================================================
+  // ✅ GST Export Logic
   const exportGSTJSON = () => {
     if (reportType !== "sales") {
       alert("GST Export is only available for Sales Reports.");
@@ -313,81 +344,65 @@ const Reports = () => {
       return;
     }
 
-    // --- STEP 1: CONFIGURATION ---
-    // Note: Isse client settings se dynamically bhi le sakte ho baad mein
-    const SHOP_GSTIN = "09AAAAA0000A1Z5"; // <--- CHANGE THIS IF NEEDED
-    const SHOP_STATE_CODE = "09"; // 09 for Uttar Pradesh.
+    // 1. Basic Info
+    const SHOP_GSTIN = "09AAAAA0000A1Z5";
+    const SHOP_STATE_CODE = "09";
 
-    // Financial Period Format: MMYYYY (e.g. 122024)
     const currentMonth = filters.month
       ? filters.month.split("-")
       : new Date().toISOString().slice(0, 7).split("-");
     const fp = `${currentMonth[1]}${currentMonth[0]}`;
 
-    // --- STEP 2: AGGREGATE DATA FOR B2CS (Retail Sales) ---
-    // GST Portal Rule: Retail invoices bina naam ke State & Rate wise group hote hain.
+    // 2. Aggregate Data for B2CS
     const b2csMap = {};
 
     reportData.forEach((inv) => {
-      // Skip incomplete or zero value invoices
       const taxable = Number(inv.taxableAmount || 0);
       if (taxable <= 0) return;
 
-      // Determine Place of Supply (POS)
-      // Rule: Agar IGST hai to Inter-State, nahi to Intra-State (Shop State)
       const isInterState = Number(inv.igstAmount || 0) > 0;
-
-      // Agar customer state code saved nahi hai to logic lagao:
-      // Inter-State hai to "99" (Other) ya specific code, Local hai to SHOP_STATE_CODE
       const pos = isInterState ? "99" : SHOP_STATE_CODE;
 
-      // Determine Rate
-      // Jewellery mein 3% common hai. Hum reverse calculate karke nikalenge.
       const totalTax =
         (Number(inv.cgst) || 0) +
         (Number(inv.sgst) || 0) +
         (Number(inv.igstAmount) || 0);
-      let rate = 3.0; // Default fallback
+      let rate = 3.0;
 
       if (taxable > 0) {
         const calculatedRate = (totalTax / taxable) * 100;
         const rounded = Math.round(calculatedRate);
-        // Standard GST Rates check
         if ([0, 0.25, 3, 5, 12, 18, 28].includes(rounded)) {
           rate = rounded;
         } else {
-          // Agar calculation thoda off hai (e.g. 2.99%), to closest standard rate lo
           if (Math.abs(calculatedRate - 3) < 0.5) rate = 3.0;
           else if (Math.abs(calculatedRate - 18) < 0.5) rate = 18.0;
           else if (Math.abs(calculatedRate - 5) < 0.5) rate = 5.0;
         }
       }
 
-      // Key for Grouping: "StateCode-Rate" (e.g., "09-3")
       const key = `${pos}-${rate}`;
 
       if (!b2csMap[key]) {
         b2csMap[key] = {
           sply_ty: isInterState ? "INTER" : "INTRA",
           rt: rate,
-          typ: "OE", // OE = Other than E-commerce
+          typ: "OE",
           pos: pos,
           txval: 0,
-          camt: 0, // Central Tax
-          samt: 0, // State Tax
-          iamt: 0, // Integrated Tax (IGST)
-          csamt: 0, // Cess
+          camt: 0,
+          samt: 0,
+          iamt: 0,
+          csamt: 0,
         };
       }
 
-      // Add values
       b2csMap[key].txval += taxable;
       b2csMap[key].camt += Number(inv.cgst || 0);
       b2csMap[key].samt += Number(inv.sgst || 0);
       b2csMap[key].iamt += Number(inv.igstAmount || 0);
     });
 
-    // Convert Map to Array & Fix Decimals (2 places)
     const b2csArray = Object.values(b2csMap).map((item) => ({
       sply_ty: item.sply_ty,
       rt: item.rt,
@@ -400,23 +415,18 @@ const Reports = () => {
       csamt: 0,
     }));
 
-    // --- STEP 3: CONSTRUCT FINAL JSON ---
-    // Ye structure GST portal accept karta hai
     const gstPayload = {
       gstin: SHOP_GSTIN,
       fp: fp,
-      version: "GST4.0", // Tally standard version string
+      version: "GST4.0",
       hash: "hash",
       b2cs: b2csArray,
-      // Empty sections for compatibility
       b2b: [],
       cdnr: [],
       b2ba: [],
       cdnra: [],
       exp: [],
-      hsn: {
-        data: [], // Agar HSN summary chahiye to future mein yahan add kar sakte ho
-      },
+      hsn: { data: [] },
     };
 
     const filename = `GSTR1_${SHOP_GSTIN}_${fp}.json`;
@@ -428,7 +438,6 @@ const Reports = () => {
   const handleTabChange = (type) => {
     setReportType(type);
     setCurrentPage(1);
-    // filters keep same — good for cross comparison
   };
 
   return (
@@ -550,8 +559,27 @@ const Reports = () => {
               className="border px-2 py-1 rounded-md text-sm"
             >
               <option value="all">All</option>
-              <option value="white">White (GST + White Stock)</option>
-              <option value="black">Black (No GST Stock)</option>
+              <option value="white">White (GST)</option>
+              <option value="black">Black (No GST)</option>
+            </select>
+          </div>
+
+          {/* ✅ Jewellery Type Filter (NEW) */}
+          <div className="flex flex-col">
+            <span className="text-xs text-gray-500 font-semibold mb-1">
+              Jewellery Type
+            </span>
+            <select
+              value={filters.jewelleryType}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, jewelleryType: e.target.value }))
+              }
+              className="border px-2 py-1 rounded-md text-sm"
+            >
+              <option value="all">All</option>
+              <option value="Gold">Gold</option>
+              <option value="Silver">Silver</option>
+              <option value="Other">Other</option>
             </select>
           </div>
 
@@ -564,11 +592,13 @@ const Reports = () => {
                   dateFrom: "",
                   dateTo: "",
                   search: "",
+                  stockType: "all",
+                  jewelleryType: "all",
                 })
               }
               className="px-3 py-2 bg-red-500 text-white rounded-md text-sm"
             >
-              Clear Filters
+              Clear
             </button>
           </div>
         </div>
@@ -660,7 +690,7 @@ const Reports = () => {
               className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm"
             >
               <Download size={16} />
-              Export Excel
+              Excel
             </button>
 
             <button
@@ -668,10 +698,10 @@ const Reports = () => {
               className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm"
             >
               <Download size={16} />
-              Raw JSON
+              JSON
             </button>
 
-            {/* 🔥 GST JSON BUTTON (Purple Color) */}
+            {/* 🔥 GST JSON BUTTON */}
             {reportType === "sales" && (
               <button
                 onClick={exportGSTJSON}
@@ -701,16 +731,17 @@ const Reports = () => {
                   <>
                     <th className="th">SKU</th>
                     <th className="th">Name</th>
+                    <th className="th">Type</th>
                     <th className="th">HSN</th>
-                    <th className="th">HUID</th>
                     <th className="th">Weight</th>
                   </>
                 )}
                 {reportType === "girwi" && (
                   <>
                     <th className="th">Girvi No.</th>
+                    <th className="th">Customer</th>
+                    <th className="th">Item</th>
                     <th className="th">Weight</th>
-                    <th className="th">Date</th>
                     <th className="th">Status</th>
                   </>
                 )}
@@ -739,8 +770,21 @@ const Reports = () => {
                     <>
                       <td>{i.sku}</td>
                       <td>{i.name}</td>
+                      <td>
+                        {/* Show category badge */}
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                            i.category === "Gold"
+                              ? "bg-yellow-100 text-yellow-800"
+                              : i.category === "Silver"
+                              ? "bg-gray-100 text-gray-800"
+                              : "bg-orange-50 text-orange-800"
+                          }`}
+                        >
+                          {i.category || "Other"}
+                        </span>
+                      </td>
                       <td>{i.hsnCode}</td>
-                      <td>{i.huid}</td>
                       <td className="font-bold">
                         {(i.totalWeight || 0) + " g"}
                       </td>
@@ -750,8 +794,9 @@ const Reports = () => {
                   {reportType === "girwi" && (
                     <>
                       <td>{i.girviNumber}</td>
+                      <td>{i.name}</td>
+                      <td>{i.itemDescription}</td>
                       <td>{(i.weight || 0) + " g"}</td>
-                      <td>{i.startDate}</td>
                       <td
                         className={
                           i.status === "Active"

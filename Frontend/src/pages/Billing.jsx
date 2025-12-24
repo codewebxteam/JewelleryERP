@@ -144,6 +144,9 @@ const Billing = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [loadingInvoiceId, setLoadingInvoiceId] = useState(null);
 
+  // Filter State (All, Paid, Due)
+  const [filterStatus, setFilterStatus] = useState("All");
+
   // Manual date & time for invoice
   const [invoiceDate, setInvoiceDate] = useState("");
   const [invoiceTime, setInvoiceTime] = useState("");
@@ -183,12 +186,14 @@ const Billing = () => {
   const [discount, setDiscount] = useState("");
   const [receivedAmount, setReceivedAmount] = useState("");
 
-  // ✅ NEW: IGST Toggle
+  // IGST Toggle
   const [isIGSTEnabled, setIsIGSTEnabled] = useState(false);
 
   // --- New Item Input State ---
+  const [itemCategory, setItemCategory] = useState("");
   const [itemName, setItemName] = useState("");
-  const [itemHsn, setItemHsn] = useState("7113");
+  // ✅ UPDATE: Default HSN removed (Empty string)
+  const [itemHsn, setItemHsn] = useState("");
   const [itemHuc, setItemHuc] = useState("");
   const [itemWeight, setItemWeight] = useState("");
   const [itemRate, setItemRate] = useState("");
@@ -219,27 +224,42 @@ const Billing = () => {
     return () => document.removeEventListener("click", handleOutside);
   }, []);
 
+  // Updated Suggestion Logic
   useEffect(() => {
-    if (!productQuery) {
-      setSuggestions([]);
-      return;
+    let filtered = stockInventory;
+
+    // 1. Filter by Category (if selected)
+    if (itemCategory && itemCategory !== "All") {
+      filtered = filtered.filter((item) => item.category === itemCategory);
     }
-    const q = productQuery.toLowerCase();
-    const filtered = stockInventory
-      .filter(
+
+    // 2. Filter by Search Query (if typed)
+    if (productQuery) {
+      const q = productQuery.toLowerCase();
+      filtered = filtered.filter(
         (item) =>
           item.name?.toLowerCase().includes(q) ||
           item.sku?.toLowerCase().includes(q)
-      )
+      );
+    } else if (!itemCategory || itemCategory === "All") {
+      // If NO category selected and NO query typed -> Show nothing
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    // Sort and limit
+    filtered = filtered
       .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 6);
+      .slice(0, 8);
+
     setSuggestions(filtered);
-    setShowSuggestions(true);
-  }, [productQuery, stockInventory]);
+    setShowSuggestions(filtered.length > 0);
+  }, [productQuery, itemCategory, stockInventory]);
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm]);
+  }, [searchTerm, filterStatus]);
 
   // --- Financial Calculations ---
   const newItemsTotal = useMemo(
@@ -326,12 +346,14 @@ const Billing = () => {
       huc: itemHuc,
       amount,
       stockType: itemStockType || selectedStockItem?.stockType || "white",
+      category: itemCategory || selectedStockItem?.category || "Other",
     };
 
     setNewItems((prev) => [...prev, newItem]);
     setItemName("");
     setProductQuery("");
-    setItemHsn("7113");
+    setItemCategory("");
+    setItemHsn(""); // Reset HSN to empty
     setItemHuc("");
     setItemWeight("");
     setItemRate("");
@@ -433,7 +455,7 @@ const Billing = () => {
       return;
     }
 
-    // ✅ Generate Invoice No: SLJ/2025-26/0001
+    // Generate Invoice No
     const invoiceDateObj = new Date(invoiceDate);
     const year = invoiceDateObj.getFullYear();
     const month = invoiceDateObj.getMonth() + 1;
@@ -526,7 +548,8 @@ const Billing = () => {
     setUtr("");
     setIsIGSTEnabled(false);
     setItemName("");
-    setItemHsn("7113");
+    setItemCategory("");
+    setItemHsn("");
     setItemHuc("");
     setItemWeight("");
     setItemRate("");
@@ -967,9 +990,16 @@ const Billing = () => {
     return invoices.filter((inv) => {
       const name = inv.customer?.name?.toLowerCase() || "";
       const id = (inv.invoiceNo || inv.id || "").toLowerCase();
-      return name.includes(term) || id.includes(term);
+      const matchesSearch = name.includes(term) || id.includes(term);
+
+      // ✅ Filter Logic (Added as requested)
+      let matchesStatus = true;
+      if (filterStatus === "Paid") matchesStatus = Number(inv.balanceDue) <= 0;
+      if (filterStatus === "Due") matchesStatus = Number(inv.balanceDue) > 0;
+
+      return matchesSearch && matchesStatus;
     });
-  }, [invoices, searchTerm]);
+  }, [invoices, searchTerm, filterStatus]);
 
   const totalPages = Math.max(
     1,
@@ -1013,7 +1043,11 @@ const Billing = () => {
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-rose-50 to-red-50 p-5 rounded-2xl border border-red-100 shadow-sm flex items-center justify-between">
+        {/* ✅ Made Pending Amount Card Clickable */}
+        <div
+          onClick={() => setFilterStatus("Due")}
+          className="bg-gradient-to-br from-rose-50 to-red-50 p-5 rounded-2xl border border-red-100 shadow-sm flex items-center justify-between cursor-pointer hover:scale-105 transition-transform"
+        >
           <div>
             <p className="text-red-600 font-bold text-xs uppercase tracking-wider mb-1">
               Pending Amount
@@ -1043,6 +1077,24 @@ const Billing = () => {
             size={20}
           />
         </div>
+
+        {/* ✅ New Filter Buttons */}
+        <div className="flex bg-gray-100 p-1 rounded-xl">
+          {["All", "Paid", "Due"].map((status) => (
+            <button
+              key={status}
+              onClick={() => setFilterStatus(status)}
+              className={`px-4 py-2 text-sm font-bold rounded-lg transition ${
+                filterStatus === status
+                  ? "bg-white text-gray-800 shadow text-yellow-600"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {status}
+            </button>
+          ))}
+        </div>
+
         <button
           onClick={() => setIsModalOpen(true)}
           className="w-full md:w-auto px-6 py-3 bg-gradient-to-r from-yellow-600 to-yellow-700 text-white font-bold rounded-xl shadow hover:shadow-lg transition flex items-center justify-center gap-2 transform active:scale-95"
@@ -1179,7 +1231,8 @@ const Billing = () => {
       {/* 🔹 CREATE INVOICE MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden">
+          {/* ✅ Reduced Max Width to 5xl for better fit on small laptops */}
+          <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
               <h3 className="text-xl font-bold text-gray-800">
                 Create New Invoice
@@ -1293,6 +1346,25 @@ const Billing = () => {
                   onSubmit={handleAddNewItem}
                   className="grid grid-cols-2 md:grid-cols-12 gap-4 items-end"
                 >
+                  {/* ✅ Category Dropdown */}
+                  <div className="col-span-2 md:col-span-2">
+                    <label className="label">Category</label>
+                    <select
+                      className="input-field"
+                      value={itemCategory}
+                      onChange={(e) => {
+                        setItemCategory(e.target.value);
+                        setProductQuery(""); // Reset search on category change
+                      }}
+                    >
+                      <option value="">All</option>
+                      <option value="Gold">Gold</option>
+                      <option value="Silver">Silver</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  {/* ✅ Increased column span for Item Name (Balanced Layout) */}
                   <div
                     className="col-span-2 md:col-span-3 relative"
                     ref={suggestionsRef}
@@ -1308,7 +1380,11 @@ const Billing = () => {
                         setItemName(e.target.value);
                       }}
                       onFocus={() => {
-                        if (productQuery) setShowSuggestions(true);
+                        if (
+                          productQuery ||
+                          (itemCategory && itemCategory !== "All")
+                        )
+                          setShowSuggestions(true);
                       }}
                     />
                     {showSuggestions && suggestions.length > 0 && (
@@ -1323,6 +1399,9 @@ const Billing = () => {
                               setItemHsn(s.hsnCode || itemHsn);
                               setItemHuc(s.huid || "");
                               setItemStockType(s.stockType || "white");
+                              // ✅ Auto-set category if not already set
+                              if (!itemCategory)
+                                setItemCategory(s.category || "Other");
                               setShowSuggestions(false);
                             }}
                           >
@@ -1344,7 +1423,8 @@ const Billing = () => {
                       onChange={(e) => setItemHsn(e.target.value)}
                     />
                   </div>
-                  <div className="col-span-1 md:col-span-2">
+                  {/* ✅ Reduced HUC Input Size to 1 Column */}
+                  <div className="col-span-1 md:col-span-1">
                     <label className="label">HUC</label>
                     <input
                       type="text"
@@ -1380,8 +1460,8 @@ const Billing = () => {
                       onChange={(e) => setItemMaking(e.target.value)}
                     />
                   </div>
-                  <div className="col-span-2 md:col-span-2">
-                    <label className="label">Stock Type</label>
+                  <div className="col-span-2 md:col-span-1">
+                    <label className="label">Type</label>
                     <select
                       className="input-field"
                       value={itemStockType}

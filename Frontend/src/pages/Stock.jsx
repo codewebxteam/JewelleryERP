@@ -9,6 +9,11 @@ import {
   Filter,
   TrendingUp,
   AlertCircle,
+  Gem, // Icon for Gold/Silver
+  Coins, // Icon for Metal
+  Layers, // Icon for Other
+  ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 import { db } from "../firebase";
 import {
@@ -23,7 +28,15 @@ import {
 const Stock = () => {
   const [stockList, setStockList] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState("All"); // All, White, Black
+
+  // ✅ TWO SEPARATE FILTERS
+  const [filterStockType, setFilterStockType] = useState("All"); // All, White, Black
+  const [filterCategory, setFilterCategory] = useState("All"); // All, Gold, Silver, Other
+
+  // ✅ PAGINATION STATE
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [currentItem, setCurrentItem] = useState(null);
@@ -34,6 +47,7 @@ const Stock = () => {
   const [formData, setFormData] = useState({
     sku: "",
     name: "",
+    category: "", // Gold, Silver, Other
     customName: "",
     hsnCode: "",
     huid: "",
@@ -76,22 +90,72 @@ const Stock = () => {
     );
     const whiteStock = stockList.filter((i) => i.stockType === "white").length;
     const blackStock = stockList.filter((i) => i.stockType === "black").length;
-    return { totalItems, totalWeight, whiteStock, blackStock };
+
+    const goldItems = stockList.filter((i) => i.category === "Gold");
+    const silverItems = stockList.filter((i) => i.category === "Silver");
+    const otherItems = stockList.filter((i) => i.category === "Other");
+
+    const goldWeight = goldItems.reduce(
+      (acc, i) => acc + (Number(i.totalWeight) || 0),
+      0
+    );
+    const silverWeight = silverItems.reduce(
+      (acc, i) => acc + (Number(i.totalWeight) || 0),
+      0
+    );
+    const otherWeight = otherItems.reduce(
+      (acc, i) => acc + (Number(i.totalWeight) || 0),
+      0
+    );
+
+    return {
+      totalItems,
+      totalWeight,
+      whiteStock,
+      blackStock,
+      goldCount: goldItems.length,
+      goldWeight,
+      silverCount: silverItems.length,
+      silverWeight,
+      otherCount: otherItems.length,
+      otherWeight,
+    };
   }, [stockList]);
 
-  // --- FILTERING ---
-  const filteredStock = stockList.filter((item) => {
-    const matchesSearch =
-      item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.sku?.toLowerCase().includes(searchTerm.toLowerCase());
+  // --- FILTERING LOGIC ---
+  const filteredStock = useMemo(() => {
+    return stockList.filter((item) => {
+      const matchesSearch =
+        item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.sku?.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesType =
-      filterType === "All" ||
-      (filterType === "White" && item.stockType === "white") ||
-      (filterType === "Black" && item.stockType === "black");
+      // 1. Check Stock Type (White/Black)
+      let matchesStock = true;
+      if (filterStockType === "White")
+        matchesStock = item.stockType === "white";
+      if (filterStockType === "Black")
+        matchesStock = item.stockType === "black";
 
-    return matchesSearch && matchesType;
-  });
+      // 2. Check Category (Gold/Silver/Other)
+      let matchesCategory = true;
+      if (filterCategory !== "All") {
+        matchesCategory = item.category === filterCategory;
+      }
+
+      return matchesSearch && matchesStock && matchesCategory;
+    });
+  }, [stockList, searchTerm, filterStockType, filterCategory]);
+
+  // ✅ Reset Page when Filters Change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterStockType, filterCategory]);
+
+  // ✅ PAGINATION CALCULATIONS
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = filteredStock.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredStock.length / itemsPerPage);
 
   // Modal Handlers
   const openModal = () => {
@@ -102,6 +166,7 @@ const Stock = () => {
     setFormData({
       sku: "",
       name: "",
+      category: "",
       customName: "",
       hsnCode: "",
       huid: "",
@@ -119,6 +184,7 @@ const Stock = () => {
     setFormData({
       sku: item.sku || "",
       name: isCustom ? "Other" : item.name,
+      category: item.category || "",
       customName: isCustom ? item.name : "",
       hsnCode: item.hsnCode || "",
       huid: item.huid || "",
@@ -154,6 +220,11 @@ const Stock = () => {
       return;
     }
 
+    if (!formData.category) {
+      alert("Please select a Jewellery Type (Gold/Silver/Other)");
+      return;
+    }
+
     const weightNum = Number(formData.totalWeight);
     if (isNaN(weightNum) || weightNum <= 0) {
       alert("Weight must be a number greater than 0.");
@@ -164,6 +235,7 @@ const Stock = () => {
     const payload = {
       sku: formData.sku,
       name: finalName,
+      category: formData.category,
       hsnCode: formData.hsnCode,
       huid: formData.huid,
       totalWeight: finalWeight,
@@ -216,7 +288,7 @@ const Stock = () => {
         </button>
       </div>
 
-      {/* --- STATS CARDS --- */}
+      {/* --- MAIN STATS CARDS --- */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Total Weight */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between relative overflow-hidden">
@@ -232,7 +304,6 @@ const Stock = () => {
           <div className="p-3 bg-yellow-50 rounded-full text-yellow-600 relative z-10">
             <Package size={28} />
           </div>
-          {/* Decorative Circle */}
           <div className="absolute -bottom-6 -right-6 w-24 h-24 bg-yellow-400/10 rounded-full blur-2xl"></div>
         </div>
 
@@ -283,6 +354,99 @@ const Stock = () => {
         </div>
       </div>
 
+      {/* --- CATEGORY CARDS (CLICK TO FILTER) --- */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* GOLD CARD */}
+        <div
+          onClick={() => setFilterCategory("Gold")}
+          className={`cursor-pointer p-5 rounded-2xl border transition-all duration-200 transform hover:scale-[1.02] ${
+            filterCategory === "Gold"
+              ? "bg-yellow-50 border-yellow-300 ring-2 ring-yellow-200"
+              : "bg-white border-gray-100 shadow-sm hover:shadow-md"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-yellow-700 font-bold text-xs uppercase tracking-wider">
+                GOLD STOCK
+              </p>
+              <div className="flex items-end gap-2 mt-1">
+                <h3 className="text-2xl font-extrabold text-gray-800">
+                  {stats.goldWeight.toFixed(2)}
+                  <span className="text-sm font-medium text-gray-400">g</span>
+                </h3>
+                <span className="mb-1 text-xs font-semibold bg-yellow-200 text-yellow-800 px-2 py-0.5 rounded-full">
+                  {stats.goldCount} Items
+                </span>
+              </div>
+            </div>
+            <div className="p-2.5 bg-yellow-100 text-yellow-600 rounded-full">
+              <Gem size={24} />
+            </div>
+          </div>
+        </div>
+
+        {/* SILVER CARD */}
+        <div
+          onClick={() => setFilterCategory("Silver")}
+          className={`cursor-pointer p-5 rounded-2xl border transition-all duration-200 transform hover:scale-[1.02] ${
+            filterCategory === "Silver"
+              ? "bg-slate-50 border-slate-300 ring-2 ring-slate-200"
+              : "bg-white border-gray-100 shadow-sm hover:shadow-md"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-slate-600 font-bold text-xs uppercase tracking-wider">
+                SILVER STOCK
+              </p>
+              <div className="flex items-end gap-2 mt-1">
+                <h3 className="text-2xl font-extrabold text-gray-800">
+                  {stats.silverWeight.toFixed(2)}
+                  <span className="text-sm font-medium text-gray-400">g</span>
+                </h3>
+                <span className="mb-1 text-xs font-semibold bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">
+                  {stats.silverCount} Items
+                </span>
+              </div>
+            </div>
+            <div className="p-2.5 bg-slate-100 text-slate-500 rounded-full">
+              <Coins size={24} />
+            </div>
+          </div>
+        </div>
+
+        {/* OTHER CARD */}
+        <div
+          onClick={() => setFilterCategory("Other")}
+          className={`cursor-pointer p-5 rounded-2xl border transition-all duration-200 transform hover:scale-[1.02] ${
+            filterCategory === "Other"
+              ? "bg-orange-50 border-orange-300 ring-2 ring-orange-200"
+              : "bg-white border-gray-100 shadow-sm hover:shadow-md"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-orange-600 font-bold text-xs uppercase tracking-wider">
+                OTHER STOCK
+              </p>
+              <div className="flex items-end gap-2 mt-1">
+                <h3 className="text-2xl font-extrabold text-gray-800">
+                  {stats.otherWeight.toFixed(2)}
+                  <span className="text-sm font-medium text-gray-400">g</span>
+                </h3>
+                <span className="mb-1 text-xs font-semibold bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full">
+                  {stats.otherCount} Items
+                </span>
+              </div>
+            </div>
+            <div className="p-2.5 bg-orange-100 text-orange-600 rounded-full">
+              <Layers size={24} />
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* --- FILTERS & SEARCH --- */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 justify-between items-center">
         <div className="relative w-full md:max-w-md">
@@ -298,23 +462,43 @@ const Stock = () => {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto">
-          <span className="text-sm font-bold text-gray-500 flex items-center gap-1 mr-2">
-            <Filter size={16} /> Filters:
-          </span>
-          {["All", "White", "Black"].map((type) => (
-            <button
-              key={type}
-              onClick={() => setFilterType(type)}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                filterType === type
-                  ? "bg-gray-800 text-white shadow-md"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {type}
-            </button>
-          ))}
+        {/* TWO FILTER GROUPS */}
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto items-center">
+          {/* Filter Group 1: Stock Type */}
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            {["All", "White", "Black"].map((type) => (
+              <button
+                key={type}
+                onClick={() => setFilterStockType(type)}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                  filterStockType === type
+                    ? "bg-white text-gray-800 shadow text-green-700"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+
+          <div className="hidden sm:block h-6 w-px bg-gray-300"></div>
+
+          {/* Filter Group 2: Category */}
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            {["All", "Gold", "Silver", "Other"].map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setFilterCategory(cat)}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+                  filterCategory === cat
+                    ? "bg-white text-gray-800 shadow text-yellow-600"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -331,7 +515,7 @@ const Stock = () => {
                   Product Info
                 </th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">
-                  HSN / HUID
+                  Category
                 </th>
                 <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-center">
                   Type
@@ -345,8 +529,9 @@ const Stock = () => {
               </tr>
             </thead>
 
+            {/* ✅ Using currentItems for Pagination */}
             <tbody className="divide-y divide-gray-100">
-              {filteredStock.map((item) => (
+              {currentItems.map((item) => (
                 <tr
                   key={item.id}
                   className="hover:bg-yellow-50/30 transition-colors group"
@@ -358,14 +543,23 @@ const Stock = () => {
                   </td>
                   <td className="px-6 py-4">
                     <p className="font-bold text-gray-800">{item.name}</p>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    <div className="flex flex-col">
+                    <div className="flex flex-col mt-1 text-xs text-gray-500">
                       <span>HSN: {item.hsnCode || "-"}</span>
-                      <span className="text-xs text-gray-400">
-                        HUID: {item.huid || "-"}
-                      </span>
+                      <span>HUID: {item.huid || "-"}</span>
                     </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span
+                      className={`text-xs font-bold px-2 py-1 rounded-full ${
+                        item.category === "Gold"
+                          ? "bg-yellow-100 text-yellow-800"
+                          : item.category === "Silver"
+                          ? "bg-slate-100 text-slate-700"
+                          : "bg-orange-100 text-orange-800"
+                      }`}
+                    >
+                      {item.category || "Other"}
+                    </span>
                   </td>
                   <td className="px-6 py-4 text-center">
                     {item.stockType === "white" ? (
@@ -427,6 +621,29 @@ const Stock = () => {
             </tbody>
           </table>
         </div>
+
+        {/* ✅ PAGINATION CONTROLS */}
+        {totalPages > 1 && (
+          <div className="px-6 py-4 border-t border-gray-100 flex justify-between items-center bg-gray-50">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="flex items-center gap-1 px-4 py-2 border rounded-lg bg-white shadow-sm hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium text-gray-600 transition"
+            >
+              <ArrowLeft size={16} /> Previous
+            </button>
+            <span className="text-sm font-semibold text-gray-600">
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="flex items-center gap-1 px-4 py-2 border rounded-lg bg-white shadow-sm hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium text-gray-600 transition"
+            >
+              Next <ArrowRight size={16} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* --- MODAL --- */}
@@ -468,20 +685,22 @@ const Stock = () => {
                     onChange={handleFormChange}
                   />
                 </div>
+                {/* Category Dropdown */}
                 <div className="col-span-1">
                   <label className="label">
-                    Stock Type <span className="text-red-500">*</span>
+                    Jewellery Type <span className="text-red-500">*</span>
                   </label>
                   <select
-                    name="stockType"
+                    name="category"
                     required
                     className="input-field"
-                    value={formData.stockType}
+                    value={formData.category}
                     onChange={handleFormChange}
                   >
                     <option value="">Select Type</option>
-                    <option value="white">White (GST)</option>
-                    <option value="black">Black (No GST)</option>
+                    <option value="Gold">Gold</option>
+                    <option value="Silver">Silver</option>
+                    <option value="Other">Other</option>
                   </select>
                 </div>
               </div>
@@ -517,6 +736,44 @@ const Stock = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
+                  <label className="label">
+                    Stock Type <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    name="stockType"
+                    required
+                    className="input-field"
+                    value={formData.stockType}
+                    onChange={handleFormChange}
+                  >
+                    <option value="">Select Type</option>
+                    <option value="white">White (GST)</option>
+                    <option value="black">Black (No GST)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">
+                    Net Weight (g) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      name="totalWeight"
+                      required
+                      step="0.01"
+                      className="input-field pr-8 text-lg font-bold text-gray-700"
+                      value={formData.totalWeight}
+                      onChange={handleFormChange}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">
+                      g
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
                   <label className="label">HSN Code</label>
                   <input
                     type="text"
@@ -535,26 +792,6 @@ const Stock = () => {
                     value={formData.huid}
                     onChange={handleFormChange}
                   />
-                </div>
-              </div>
-
-              <div>
-                <label className="label">
-                  Net Weight (g) <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    name="totalWeight"
-                    required
-                    step="0.01"
-                    className="input-field pr-8 text-lg font-bold text-gray-700"
-                    value={formData.totalWeight}
-                    onChange={handleFormChange}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">
-                    g
-                  </span>
                 </div>
               </div>
 

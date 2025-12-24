@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { Search } from "lucide-react";
+import { Search, Filter } from "lucide-react";
 import {
   FaEye,
   FaLock,
@@ -756,9 +756,10 @@ export default function GirviPage() {
   const [selectedGirvi, setSelectedGirvi] = useState(null);
   const [girviListState, setGirviListState] = useState([]);
   const [nextGirviId, setNextGirviId] = useState(1001);
+  const [filterStatus, setFilterStatus] = useState("All");
 
   const [currentPage, setCurrentPage] = useState(1);
-  const recordsPerPage = 10;
+  const recordsPerPage = 10; // ✅ Ensure 10 records per page
 
   // Stats State
   const [stats, setStats] = useState({
@@ -779,7 +780,6 @@ export default function GirviPage() {
     let totalPrinc = 0;
 
     girviListState.forEach((item) => {
-      // Run calculations for every item to get accurate historical interest paid
       const calc = calculateMonthlyInterest(
         item.amount,
         item.interestRate || 2,
@@ -788,7 +788,6 @@ export default function GirviPage() {
         item.payments
       );
 
-      // Add to aggregate stats
       if (item.status === "Active") {
         activeP += calc.principalRemaining;
       }
@@ -803,7 +802,7 @@ export default function GirviPage() {
     });
   }, [girviListState]);
 
-  // Fetch Next ID
+  // ✅ ROBUST NEXT ID FETCH
   const fetchNextId = async () => {
     try {
       const q = query(
@@ -812,15 +811,28 @@ export default function GirviPage() {
         limit(1)
       );
       const snapshot = await getDocs(q);
+
       if (!snapshot.empty) {
-        const lastId = snapshot.docs[0].data().girviNumber;
-        setNextGirviId(Number(lastId) + 1);
+        const lastData = snapshot.docs[0].data();
+        const lastId = Number(lastData.girviNumber);
+        if (!isNaN(lastId)) {
+          setNextGirviId(lastId + 1);
+        } else {
+          setNextGirviId(1001);
+        }
       } else {
         setNextGirviId(1001);
       }
     } catch (err) {
       console.error("Error fetching next ID:", err);
-      setNextGirviId(1001);
+      if (girviListState.length > 0) {
+        const maxId = Math.max(
+          ...girviListState.map((g) => Number(g.girviNumber) || 0)
+        );
+        setNextGirviId(maxId + 1);
+      } else {
+        setNextGirviId(1001);
+      }
     }
   };
 
@@ -874,20 +886,28 @@ export default function GirviPage() {
     }
   };
 
+  // Filter Logic
+  const filteredGirviList = useMemo(() => {
+    return girviListState.filter((item) => {
+      if (filterStatus === "All") return true;
+      return item.status === filterStatus;
+    });
+  }, [girviListState, filterStatus]);
+
   // Pagination Logic
   const indexOfLastRecord = currentPage * recordsPerPage;
   const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
-  const currentRecords = girviListState.slice(
+  const currentRecords = filteredGirviList.slice(
     indexOfFirstRecord,
     indexOfLastRecord
   );
-  const totalPages = Math.ceil(girviListState.length / recordsPerPage);
+  const totalPages = Math.ceil(filteredGirviList.length / recordsPerPage);
 
   const handleFormSubmit = async (formData) => {
     const newGirvi = {
       ...formData,
       girviNumber: Number(formData.girviNumber),
-      marketValue: Number(formData.marketValue || 0), // Explicit Number conversion
+      marketValue: Number(formData.marketValue || 0),
       amount: Number(formData.amount),
       startDate: formData.date,
       interestRate: Number(formData.interestRate) || 2,
@@ -993,18 +1013,40 @@ export default function GirviPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <input
-          type="text"
-          placeholder="Search by Name or Girvi ID..."
-          className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition"
-          onChange={(e) => handleSearch(e.target.value)}
-        />
-        <Search
-          className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
-          size={20}
-        />
+      {/* Search & Filter */}
+      <div className="flex flex-col md:flex-row gap-4 items-center">
+        <div className="relative w-full md:w-1/2">
+          <input
+            type="text"
+            placeholder="Search by Name or Girvi ID..."
+            className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition"
+            onChange={(e) => handleSearch(e.target.value)}
+          />
+          <Search
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
+            size={20}
+          />
+        </div>
+
+        {/* Status Filters */}
+        <div className="flex bg-gray-100 p-1 rounded-xl">
+          {["All", "Active", "Closed"].map((status) => (
+            <button
+              key={status}
+              onClick={() => {
+                setFilterStatus(status);
+                setCurrentPage(1);
+              }}
+              className={`px-4 py-2 text-sm font-bold rounded-lg transition ${
+                filterStatus === status
+                  ? "bg-white text-gray-800 shadow text-yellow-600"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {status}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Table */}
