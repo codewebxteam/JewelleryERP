@@ -2,9 +2,9 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../firebase";
-import logo from "../assets/logo.png";
+import logo from "../assets/logo.webp";
 
-const SHOP_NAME = "Shree Ganesh Jewellery";
+const SHOP_NAME = "Shree Laxmi Jewellers and Sons";
 
 function Login() {
   const navigate = useNavigate();

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { UserCircle, LogOut, KeyRound, User } from "lucide-react";
-import logo from "../assets/logo.png";
+import logo from "../assets/logo.webp";
 import { useNavigate } from "react-router-dom";
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase";

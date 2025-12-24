@@ -1,9 +1,7 @@
-// Billing.jsx
-// ✅ IGST toggle + White-only taxable implementation
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import logoImg from "../assets/logo.png";
+import logoImg from "../assets/logo.webp";
 import {
   Plus,
   Trash2,
@@ -16,6 +14,10 @@ import {
   CheckCircle,
   Loader2,
   AlertCircle,
+  TrendingUp,
+  Wallet,
+  AlertTriangle,
+  IndianRupee,
 } from "lucide-react";
 import { db } from "../firebase";
 import {
@@ -23,11 +25,10 @@ import {
   addDoc,
   onSnapshot,
   updateDoc,
+  deleteDoc,
   doc,
-  getDocs,
   query,
   orderBy,
-  limit,
 } from "firebase/firestore";
 
 // --- Configuration ---
@@ -102,7 +103,7 @@ const numberToWords = (num) => {
   str +=
     n[5] != 0
       ? (str !== "" ? "and " : "") +
-      (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]])
+        (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]])
       : "";
   return str + "Only";
 };
@@ -110,21 +111,38 @@ const numberToWords = (num) => {
 const Billing = () => {
   const [invoices, setInvoices] = useState([]);
 
-  // Load invoices
+  // Load invoices - Ordered by CreatedAt DESC (Latest on top)
   useEffect(() => {
     const ref = collection(db, "invoices");
-    const unsub = onSnapshot(ref, (snap) => {
+    const q = query(ref, orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
       const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setInvoices(all);
     });
     return () => unsub();
   }, []);
 
+  // --- Stats Calculation ---
+  const stats = useMemo(() => {
+    const total = invoices.reduce(
+      (acc, curr) => acc + (Number(curr.grandTotal) || 0),
+      0
+    );
+    const received = invoices.reduce(
+      (acc, curr) => acc + (Number(curr.receivedAmount) || 0),
+      0
+    );
+    const pending = invoices.reduce(
+      (acc, curr) => acc + (Number(curr.balanceDue) || 0),
+      0
+    );
+    return { total, received, pending };
+  }, [invoices]);
+
   // --- Main State ---
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [loadingInvoiceId, setLoadingInvoiceId] = useState(null);
-  const [invoiceNo, setInvoiceNo] = useState(null);
 
   // Manual date & time for invoice
   const [invoiceDate, setInvoiceDate] = useState("");
@@ -135,7 +153,7 @@ const Billing = () => {
 
   // Pagination
   const [page, setPage] = useState(1);
-  const itemsPerPage = 5;
+  const itemsPerPage = 8;
 
   // Payment modal for due payments
   const [paymentModal, setPaymentModal] = useState(null);
@@ -175,8 +193,6 @@ const Billing = () => {
   const [itemWeight, setItemWeight] = useState("");
   const [itemRate, setItemRate] = useState("");
   const [itemMaking, setItemMaking] = useState("");
-
-  // NEW: Item selected stockType (white/black) from suggestions
   const [itemStockType, setItemStockType] = useState("");
 
   // --- Old Item Exchange State ---
@@ -192,7 +208,10 @@ const Billing = () => {
 
   useEffect(() => {
     const handleOutside = (e) => {
-      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target)) {
+      if (
+        suggestionsRef.current &&
+        !suggestionsRef.current.contains(e.target)
+      ) {
         setShowSuggestions(false);
       }
     };
@@ -206,7 +225,6 @@ const Billing = () => {
       return;
     }
     const q = productQuery.toLowerCase();
-
     const filtered = stockInventory
       .filter(
         (item) =>
@@ -215,12 +233,10 @@ const Billing = () => {
       )
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 6);
-
     setSuggestions(filtered);
     setShowSuggestions(true);
   }, [productQuery, stockInventory]);
 
-  // Reset page when search changes
   useEffect(() => {
     setPage(1);
   }, [searchTerm]);
@@ -240,8 +256,6 @@ const Billing = () => {
     return val > 0 ? val : 0;
   }, [newItemsTotal, oldItemsTotal]);
 
-
-  // taxableAmount should be computed based on WHITE items only (minus discount)
   const taxableAmount = useMemo(() => {
     const val = subTotal - Number(discount || 0);
     return val > 0 ? val : 0;
@@ -249,15 +263,13 @@ const Billing = () => {
 
   const cgst = useMemo(() => taxableAmount * CGST_RATE, [taxableAmount]);
   const sgst = useMemo(() => taxableAmount * SGST_RATE, [taxableAmount]);
-
-  // ✅ NEW: IGST Calculation (on same taxableAmount)
   const igstAmount = useMemo(() => {
     return isIGSTEnabled ? taxableAmount * IGST_RATE : 0;
   }, [taxableAmount, isIGSTEnabled]);
 
   const grandTotal = useMemo(
     () => Math.round(taxableAmount + cgst + sgst + igstAmount),
-    [taxableAmount, cgst, sgst, igstAmount, subTotal,]
+    [taxableAmount, cgst, sgst, igstAmount, subTotal]
   );
 
   const balanceDue = useMemo(() => {
@@ -279,12 +291,10 @@ const Billing = () => {
 
   const handleAddNewItem = (e) => {
     e.preventDefault();
-
     if (!itemName || !itemWeight || !itemRate || !itemMaking) {
       alert("Please fill all product fields.");
       return;
     }
-
     const weight = Number(itemWeight);
     const rate = Number(itemRate);
     const making = Number(itemMaking);
@@ -292,11 +302,10 @@ const Billing = () => {
     if (selectedStockItem) {
       const currentStock = Number(
         selectedStockItem.totalWeight ||
-        selectedStockItem.weight ||
-        selectedStockItem.qty ||
-        0
+          selectedStockItem.weight ||
+          selectedStockItem.qty ||
+          0
       );
-
       if (weight > currentStock) {
         alert(
           `Stock is low! Only ${currentStock}g available. Please enter lower weight.`
@@ -307,7 +316,6 @@ const Billing = () => {
     }
 
     const amount = (rate + making) * weight;
-
     const newItem = {
       id: Date.now().toString(),
       name: itemName,
@@ -317,12 +325,10 @@ const Billing = () => {
       hsn: itemHsn,
       huc: itemHuc,
       amount,
-      stockType: itemStockType || (selectedStockItem?.stockType || "white"),
+      stockType: itemStockType || selectedStockItem?.stockType || "white",
     };
 
     setNewItems((prev) => [...prev, newItem]);
-
-    // reset item fields
     setItemName("");
     setProductQuery("");
     setItemHsn("7113");
@@ -341,16 +347,13 @@ const Billing = () => {
 
   const handleAddOldItem = (e) => {
     e.preventDefault();
-
     if (!oldItemName || !oldItemWeight || !oldItemRate) {
       alert("Please fill old product fields.");
       return;
     }
-
     const weight = Number(oldItemWeight);
     const rate = Number(oldItemRate);
     const amount = weight * rate;
-
     const oldItem = {
       id: Date.now().toString(),
       name: oldItemName,
@@ -358,9 +361,7 @@ const Billing = () => {
       rate,
       amount,
     };
-
     setOldItems((prev) => [...prev, oldItem]);
-
     setOldItemName("");
     setOldItemWeight("");
     setOldItemRate("");
@@ -370,11 +371,8 @@ const Billing = () => {
     setOldItems((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Update stock after saving invoice:
-  // Prefer deducting from inventory item that matches stockType first.
   const updateStockFromInvoice = async (invoice) => {
     for (const sold of invoice.newItems) {
-      // First try to find exact match which also has same stockType
       let match = stockInventory.find(
         (s) =>
           s.name === sold.name &&
@@ -383,7 +381,6 @@ const Billing = () => {
           (s.stockType || "white") === (sold.stockType || "white")
       );
 
-      // Fallback: find any match ignoring stockType
       if (!match) {
         match = stockInventory.find(
           (s) =>
@@ -417,32 +414,29 @@ const Billing = () => {
       alert("Customer Name and at least one Item are required.");
       return;
     }
-
     if (!invoiceDate || !invoiceTime) {
       alert("Please enter invoice date and time.");
       return;
     }
 
     const receivedNum = Number(receivedAmount || 0);
-
     if (receivedNum > grandTotal) {
       alert(
-        `Allowed Payment Limit: ${formatCurrency(grandTotal)}\n` +
-        `You entered: ${formatCurrency(receivedNum)}`
+        `Allowed Payment Limit: ${formatCurrency(
+          grandTotal
+        )}\nYou entered: ${formatCurrency(receivedNum)}`
       );
       return;
     }
-
     if (paymentMode !== "Cash" && receivedNum > 0 && !utr.trim()) {
       alert("UTR / Transaction ID is required for non-cash payments.");
       return;
     }
 
-    // Generate Financial Year from Invoice Date
+    // ✅ Generate Invoice No: SLJ/2025-26/0001
     const invoiceDateObj = new Date(invoiceDate);
     const year = invoiceDateObj.getFullYear();
-    const month = invoiceDateObj.getMonth() + 1; // Month is 0-indexed
-
+    const month = invoiceDateObj.getMonth() + 1;
     let financialYear;
     if (month >= 4) {
       financialYear = `${year}-${(year + 1).toString().slice(2)}`;
@@ -450,48 +444,40 @@ const Billing = () => {
       financialYear = `${year - 1}-${year.toString().slice(2)}`;
     }
 
-    // Fetch the last invoice number from the database
-    const invoicesSnapshot = await getDocs(
-      query(collection(db, "invoices"), orderBy("createdAt", "desc"), limit(1))
+    const fyPrefix = `SLJ/${financialYear}/`;
+    const fyInvoices = invoices.filter(
+      (inv) => inv.invoiceNo && inv.invoiceNo.startsWith(fyPrefix)
     );
-    let lastInvoiceNo = "SLJ" + financialYear + "-0000";
-    if (!invoicesSnapshot.empty) {
-      const lastInvoice = invoicesSnapshot.docs[0].data();
-      const lastInvoiceNoParts = lastInvoice.invoiceNo.match(
-        /SLJ(\d{4}-\d{2})-(\d{4})/
+    let nextSeq = 1;
+    if (fyInvoices.length > 0) {
+      const maxSeq = Math.max(
+        ...fyInvoices.map((inv) => {
+          const parts = inv.invoiceNo.split("/");
+          return parseInt(parts[2], 10) || 0;
+        })
       );
-      if (lastInvoiceNoParts) {
-        const lastYear = lastInvoiceNoParts[1];
-        const lastNumber = parseInt(lastInvoiceNoParts[2], 10);
-        if (lastYear === financialYear) {
-          lastInvoiceNo = `SLJ${financialYear}-${String(lastNumber + 1).padStart(
-            4,
-            "0"
-          )}`;
-        } else {
-          lastInvoiceNo = `SLJ${financialYear}-0001`;
-        }
-      }
+      nextSeq = maxSeq + 1;
     }
+    const newInvoiceNo = `${fyPrefix}${String(nextSeq).padStart(4, "0")}`;
 
     const balance = grandTotal - receivedNum;
     const safeBalance = balance > 0 ? balance : 0;
-
     const initialHistory =
       receivedNum > 0
         ? [
-          {
-            amount: receivedNum,
-            method: paymentMode,
-            utr: paymentMode !== "Cash" ? utr.trim() : "",
-            date: new Date().toISOString(),
-            balanceAfter: safeBalance,
-          },
-        ]
+            {
+              amount: receivedNum,
+              method: paymentMode,
+              utr: paymentMode !== "Cash" ? utr.trim() : "",
+              date: new Date().toISOString(),
+              balanceAfter: safeBalance,
+            },
+          ]
         : [];
 
     const invoicePayload = {
-      invoiceNo: lastInvoiceNo,
+      invoiceNo: newInvoiceNo,
+      financialYear: financialYear,
       date: invoiceDate,
       time: invoiceTime,
       customer,
@@ -511,25 +497,24 @@ const Billing = () => {
       isIGSTEnabled,
       grandTotal,
       paymentHistory: initialHistory,
-      stockType: newItems.some(i => i.stockType === "black") ? "black" : "white",
+      stockType: newItems.some((i) => i.stockType === "black")
+        ? "black"
+        : "white",
     };
-
 
     try {
       await addDoc(collection(db, "invoices"), {
         ...invoicePayload,
         createdAt: new Date(),
       });
-
       await updateStockFromInvoice(invoicePayload);
-
-      alert("Invoice Saved Successfully ✨");
+      alert(`Invoice Generated: ${newInvoiceNo} 🎉`);
     } catch (err) {
       console.error(err);
       alert("❌ Saving Error! Check console.");
     }
 
-    // RESET FORM
+    // Reset Form
     setCustomer({ name: "", address: "", contact: "" });
     setNewItems([]);
     setOldItems([]);
@@ -540,7 +525,6 @@ const Billing = () => {
     setPaymentMode("Cash");
     setUtr("");
     setIsIGSTEnabled(false);
-
     setItemName("");
     setItemHsn("7113");
     setItemHuc("");
@@ -548,30 +532,42 @@ const Billing = () => {
     setItemRate("");
     setItemMaking("");
     setItemStockType("");
-
     setIsModalOpen(false);
+  };
+
+  const handleDeleteInvoice = async (id) => {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this invoice? This action cannot be undone."
+      )
+    ) {
+      try {
+        await deleteDoc(doc(db, "invoices", id));
+        alert("Invoice deleted successfully 🗑️");
+      } catch (error) {
+        console.error("Error deleting invoice:", error);
+        alert("Failed to delete invoice.");
+      }
+    }
   };
 
   const handleAddPayment = async () => {
     if (!paymentModal) return;
-
     const amountNum = Number(payAmount || 0);
     if (!amountNum || amountNum <= 0) {
       alert("Please enter a valid amount.");
       return;
     }
-
     if (payMode !== "Cash" && !payUtr.trim()) {
       alert("UTR / Transaction ID is required for non-cash payments.");
       return;
     }
-
     const currentDue = Number(paymentModal.balanceDue || 0);
-
     if (amountNum > currentDue) {
       alert(
-        `Allowed Payment Limit: ${formatCurrency(currentDue)}\n` +
-        `You entered: ${formatCurrency(amountNum)}`
+        `Allowed Payment Limit: ${formatCurrency(
+          currentDue
+        )}\nYou entered: ${formatCurrency(amountNum)}`
       );
       return;
     }
@@ -579,11 +575,8 @@ const Billing = () => {
     try {
       const invRef = doc(db, "invoices", paymentModal.id);
       const existingHistory = paymentModal.paymentHistory || [];
-
       const newBalance = Math.max(0, currentDue - amountNum);
-      const newReceived =
-        Number(paymentModal.receivedAmount || 0) + amountNum;
-
+      const newReceived = Number(paymentModal.receivedAmount || 0) + amountNum;
       const newHistoryEntry = {
         amount: amountNum,
         method: payMode,
@@ -598,13 +591,11 @@ const Billing = () => {
         paymentHistory: [...existingHistory, newHistoryEntry],
         updatedAt: new Date(),
       });
-
       alert("Payment updated successfully ✅");
     } catch (error) {
       console.error(error);
-      alert("Error updating payment. Check console.");
+      alert("Error updating payment.");
     }
-
     setPaymentModal(null);
     setPayAmount("");
     setPayMode("Cash");
@@ -614,10 +605,8 @@ const Billing = () => {
   // --- GENERATE PDF ---
   const generatePDF = async (invoice, action = "view") => {
     setLoadingInvoiceId(invoice.id);
-
     try {
       const pdf = new jsPDF();
-
       const loadImage = (src) => {
         return new Promise((resolve) => {
           const img = new Image();
@@ -640,20 +629,16 @@ const Billing = () => {
       const logoData = await loadImage(logoImg);
       const pageWidth = pdf.internal.pageSize.width;
       const pageHeight = pdf.internal.pageSize.height;
-
       const goldColor = [218, 165, 32];
       const lightGold = [253, 245, 230];
       const darkText = [30, 30, 30];
 
-      // Header
       pdf.setFillColor(...goldColor);
       pdf.rect(0, 0, pageWidth, 3, "F");
-
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(14);
       pdf.setTextColor(...goldColor);
       pdf.text("TAX INVOICE", pageWidth - 15, 12, { align: "right" });
-
       pdf.setFontSize(10);
       pdf.setTextColor(80, 80, 80);
       pdf.text(` ${invoice.invoiceNo || invoice.id}`, pageWidth - 15, 16, {
@@ -668,24 +653,20 @@ const Billing = () => {
       pdf.setFontSize(21);
       pdf.setTextColor(...goldColor);
       pdf.text("SHREE LAXMI JEWELLERS & SONS", 45, 22);
-
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(10);
       pdf.setTextColor(...darkText);
       pdf.text("Exclusive Gold & Diamond Jewellery", 45, 28);
       pdf.text("123, Main Road, City Center - 400001", 45, 33);
       pdf.text("Ph: 98765 43210 | GSTIN: 27ABCDE1234F1Z5", 45, 38);
-
       pdf.setDrawColor(220);
       pdf.line(10, 45, pageWidth - 10, 45);
 
-      // Billing info
       let yPos = 55;
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(10);
       pdf.setTextColor(...goldColor);
       pdf.text("BILL TO:", 14, yPos);
-
       pdf.setTextColor(0);
       pdf.setFontSize(11);
       pdf.text((invoice.customer?.name || "").toUpperCase(), 14, yPos + 6);
@@ -698,23 +679,18 @@ const Billing = () => {
       pdf.setFont("helvetica", "bold");
       pdf.setTextColor(...goldColor);
       pdf.text("DETAILS:", rightColX, yPos);
-
       pdf.setTextColor(0);
       pdf.setFont("helvetica", "normal");
-
       const dateStr = invoice.date
         ? new Date(invoice.date).toLocaleDateString("en-GB")
         : "-";
-
       pdf.text("Date:", rightColX, yPos + 6);
       pdf.text(dateStr, pageWidth - 15, yPos + 6, { align: "right" });
-
       pdf.text("Time:", rightColX, yPos + 12);
       pdf.text(invoice.time || "-", pageWidth - 15, yPos + 12, {
         align: "right",
       });
 
-      // Items table
       yPos += invoice.utr ? 32 : 28;
       autoTable(pdf, {
         startY: yPos,
@@ -758,15 +734,12 @@ const Billing = () => {
       });
 
       let finalY = pdf.lastAutoTable.finalY || yPos;
-
-      // Old items
       if (invoice.oldItems && invoice.oldItems.length > 0) {
         finalY += 8;
         pdf.setFont("helvetica", "bold");
         pdf.setFontSize(10);
         pdf.setTextColor(...goldColor);
         pdf.text("OLD PRODUCT EXCHANGE (LESS)", 14, finalY);
-
         autoTable(pdf, {
           startY: finalY + 2,
           head: [["Description", "Weight (g)", "Rate / g", "Amount"]],
@@ -798,7 +771,6 @@ const Billing = () => {
         pdf.addPage();
         finalY = 20;
       }
-
       finalY += 10;
 
       pdf.setFontSize(9);
@@ -822,17 +794,13 @@ const Billing = () => {
       pdf.setDrawColor(230);
       pdf.setFillColor(...lightGold);
       pdf.roundedRect(summaryStartX, finalY - 2, boxWidth, 75, 2, 2, "F");
-
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(10);
 
       pdf.text("Subtotal:", summaryStartX + 5, finalY + 5);
-      pdf.text(
-        formatCurrency(invoice.subTotal),
-        valueX,
-        finalY + 5,
-        { align: "right" }
-      );
+      pdf.text(formatCurrency(invoice.subTotal), valueX, finalY + 5, {
+        align: "right",
+      });
 
       if (invoice.discount > 0) {
         pdf.setTextColor(200, 0, 0);
@@ -846,23 +814,14 @@ const Billing = () => {
         pdf.setTextColor(0);
       }
 
-      pdf.text(
-        "CGST (9%):",
-        summaryStartX + 5,
-        finalY + 5 + lineHeight * 2
-      );
+      pdf.text("CGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 2);
       pdf.text(
         formatCurrency(invoice.cgst),
         valueX,
         finalY + 5 + lineHeight * 2,
         { align: "right" }
       );
-
-      pdf.text(
-        "SGST (9%):",
-        summaryStartX + 5,
-        finalY + 5 + lineHeight * 3
-      );
+      pdf.text("SGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 3);
       pdf.text(
         formatCurrency(invoice.sgst),
         valueX,
@@ -870,13 +829,8 @@ const Billing = () => {
         { align: "right" }
       );
 
-      // ✅ IGST in PDF
       if (invoice.igstAmount > 0) {
-        pdf.text(
-          "IGST (18%):",
-          summaryStartX + 5,
-          finalY + 5 + lineHeight * 4
-        );
+        pdf.text("IGST (18%):", summaryStartX + 5, finalY + 5 + lineHeight * 4);
         pdf.text(
           formatCurrency(invoice.igstAmount),
           valueX,
@@ -911,11 +865,7 @@ const Billing = () => {
       pdf.setFontSize(10);
       pdf.setTextColor(0);
       pdf.setFont("helvetica", "normal");
-      pdf.text(
-        "Received:",
-        summaryStartX + 5,
-        finalY + 5 + lineHeight * 7 + 4
-      );
+      pdf.text("Received:", summaryStartX + 5, finalY + 5 + lineHeight * 7 + 4);
       pdf.text(
         formatCurrency(invoice.receivedAmount),
         valueX,
@@ -940,21 +890,17 @@ const Billing = () => {
       );
       pdf.setTextColor(0);
 
-      // Payment history
       const history = invoice.paymentHistory || [];
       let paymentY = finalY + 5 + lineHeight * 10 + 10;
-
       if (history.length > 0) {
         if (pageHeight - paymentY < 40) {
           pdf.addPage();
           paymentY = 20;
         }
-
         pdf.setFontSize(10);
         pdf.setFont("helvetica", "bold");
         pdf.setTextColor(...goldColor);
         pdf.text("Payment History", 14, paymentY);
-
         pdf.setTextColor(0);
         autoTable(pdf, {
           startY: paymentY + 4,
@@ -987,7 +933,6 @@ const Billing = () => {
       const footerY = pageHeight - 30;
       pdf.setDrawColor(200);
       pdf.line(14, footerY, pageWidth - 14, footerY);
-
       pdf.setFontSize(8);
       pdf.setTextColor(120);
       pdf.setFont("helvetica", "normal");
@@ -996,7 +941,6 @@ const Billing = () => {
         14,
         footerY + 5
       );
-
       pdf.setTextColor(0);
       pdf.setFontSize(9);
       pdf.text("Authorized Signatory", pageWidth - 15, pageHeight - 10, {
@@ -1005,7 +949,6 @@ const Billing = () => {
 
       const pdfBlob = pdf.output("blob");
       const pdfUrl = URL.createObjectURL(pdfBlob);
-
       if (action === "download") {
         pdf.save(`Invoice_${invoice.invoiceNo || invoice.id}.pdf`);
       } else {
@@ -1019,7 +962,6 @@ const Billing = () => {
     }
   };
 
-  // Filter + pagination
   const filteredInvoices = useMemo(() => {
     const term = searchTerm.toLowerCase();
     return invoices.filter((inv) => {
@@ -1033,163 +975,165 @@ const Billing = () => {
     1,
     Math.ceil(filteredInvoices.length / itemsPerPage)
   );
-
   const paginatedInvoices = useMemo(
     () =>
-      filteredInvoices.slice(
-        (page - 1) * itemsPerPage,
-        page * itemsPerPage
-      ),
+      filteredInvoices.slice((page - 1) * itemsPerPage, page * itemsPerPage),
     [filteredInvoices, page]
   );
 
-  const btnPrimary =
-    "px-6 py-2.5 bg-gradient-to-r from-yellow-600 to-yellow-700 text-white font-bold rounded-lg shadow hover:shadow-lg transition-all flex items-center justify-center";
-  const inputStyle =
-    "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none bg-white";
-  const labelStyle =
-    "text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 block";
-
   return (
-    <div className="space-y-6 p-4 sm:px-4 md:px-6 lg:px-4 pb-24">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-2xl md:text-3xl font-extrabold text-gray-900">
-            Billing & Invoices
-          </h2>
-          <p className="text-gray-500 text-sm">
-            Create professional invoices from stock management.
-          </p>
+    <div className="p-4 sm:px-6 space-y-6 max-w-[1600px] mx-auto pb-20">
+      {/* 🔹 STATS CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-5 rounded-2xl border border-blue-100 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-blue-600 font-bold text-xs uppercase tracking-wider mb-1">
+              Total Sales Amount
+            </p>
+            <h3 className="text-2xl font-extrabold text-gray-900">
+              {formatCurrency(stats.total)}
+            </h3>
+          </div>
+          <div className="bg-blue-100 p-3 rounded-full text-blue-600 shadow-sm">
+            <TrendingUp size={24} />
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-5 rounded-2xl border border-green-100 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-green-600 font-bold text-xs uppercase tracking-wider mb-1">
+              Received Amount
+            </p>
+            <h3 className="text-2xl font-extrabold text-gray-900">
+              {formatCurrency(stats.received)}
+            </h3>
+          </div>
+          <div className="bg-green-100 p-3 rounded-full text-green-600 shadow-sm">
+            <Wallet size={24} />
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-rose-50 to-red-50 p-5 rounded-2xl border border-red-100 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-red-600 font-bold text-xs uppercase tracking-wider mb-1">
+              Pending Amount
+            </p>
+            <h3 className="text-2xl font-extrabold text-gray-900">
+              {formatCurrency(stats.pending)}
+            </h3>
+          </div>
+          <div className="bg-red-100 p-3 rounded-full text-red-600 shadow-sm">
+            <AlertTriangle size={24} />
+          </div>
+        </div>
+      </div>
+
+      {/* 🔹 HEADER & SEARCH */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+        <div className="relative w-full md:w-1/3">
+          <input
+            type="text"
+            placeholder="Search invoice no or customer..."
+            className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none transition"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <Search
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
+            size={20}
+          />
         </div>
         <button
           onClick={() => setIsModalOpen(true)}
-          className={`w-full md:w-auto ${btnPrimary}`}
+          className="w-full md:w-auto px-6 py-3 bg-gradient-to-r from-yellow-600 to-yellow-700 text-white font-bold rounded-xl shadow hover:shadow-lg transition flex items-center justify-center gap-2 transform active:scale-95"
         >
-          <Plus size={20} className="mr-2" /> Create Invoice
+          <Plus size={20} /> New Invoice
         </button>
       </div>
 
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center">
-        <Search className="text-gray-400 mr-3" size={20} />
-        <input
-          type="text"
-          placeholder="Search Invoice ID or Customer Name..."
-          className="flex-1 outline-none text-gray-700 w-full"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-      </div>
-
-      <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-100">
+      {/* 🔹 INVOICE TABLE */}
+      <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-yellow-50">
+          <table className="min-w-full text-sm divide-y divide-gray-100">
+            <thead className="bg-gray-50 text-gray-500 font-medium">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-bold text-yellow-800 uppercase whitespace-nowrap">
-                  ID
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-yellow-800 uppercase whitespace-nowrap">
-                  Customer
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-yellow-800 uppercase whitespace-nowrap">
-                  Total
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-yellow-800 uppercase whitespace-nowrap">
-                  Received
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-yellow-800 uppercase whitespace-nowrap">
-                  Balance
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-bold text-yellow-800 uppercase whitespace-nowrap">
-                  Actions
-                </th>
+                <th className="px-6 py-4 text-left">Invoice No</th>
+                <th className="px-6 py-4 text-left">Customer</th>
+                <th className="px-6 py-4 text-left">Date</th>
+                <th className="px-6 py-4 text-right">Total</th>
+                <th className="px-6 py-4 text-right">Balance</th>
+                <th className="px-6 py-4 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-100">
-              {paginatedInvoices.map((invoice) => (
-                <tr
-                  key={invoice.invoiceNo || invoice.id}
-                  className="hover:bg-gray-50 transition"
-                >
-                  <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
-                    {invoice.invoiceNo || invoice.id}
+            <tbody className="divide-y divide-gray-50">
+              {paginatedInvoices.map((inv) => (
+                <tr key={inv.id} className="hover:bg-gray-50 transition group">
+                  <td className="px-6 py-4 font-bold text-gray-700">
+                    {inv.invoiceNo}
                   </td>
-
-                  <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
-                    <div className="font-bold">
-                      {invoice.customer?.name || "-"}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {invoice.date} {invoice.time}
-                    </div>
+                  <td className="px-6 py-4 font-medium">
+                    {inv.customer?.name}
                   </td>
-
-                  <td className="px-6 py-4 font-bold text-gray-800 whitespace-nowrap">
-                    {formatCurrency(invoice.grandTotal)}
+                  <td className="px-6 py-4 text-gray-500">{inv.date}</td>
+                  <td className="px-6 py-4 text-right font-bold text-gray-800">
+                    {formatCurrency(inv.grandTotal)}
                   </td>
-
-                  <td className="px-6 py-4 text-green-600 whitespace-nowrap">
-                    {formatCurrency(invoice.receivedAmount)}
-                  </td>
-
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {Number(invoice.balanceDue || 0) > 0 ? (
-                      <span className="px-2 py-1 text-xs font-bold bg-red-100 text-red-700 rounded-full flex items-center w-max">
-                        <AlertCircle size={12} className="mr-1" /> Due:{" "}
-                        {formatCurrency(invoice.balanceDue)}
+                  <td className="px-6 py-4 text-right">
+                    {Number(inv.balanceDue) > 0 ? (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                        Due: {formatCurrency(inv.balanceDue)}
                       </span>
                     ) : (
-                      <span className="px-2 py-1 text-xs font-bold bg-green-100 text-green-700 rounded-full flex items-center w-max">
-                        <CheckCircle size={12} className="mr-1" /> Paid
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        Paid
                       </span>
                     )}
                   </td>
-
-                  <td className="px-6 py-4 text-right whitespace-nowrap flex justify-end gap-2">
-                    {Number(invoice.balanceDue || 0) > 0 && (
-                      <button
-                        onClick={() => setPaymentModal(invoice)}
-                        className="text-green-600 hover:text-green-800 p-2 text-xs font-semibold border border-green-600 rounded-full"
-                      >
-                        Pay Due
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => generatePDF(invoice, "view")}
-                      disabled={loadingInvoiceId === invoice.id}
-                      className="text-gray-500 hover:text-blue-600 p-2"
-                    >
-                      <Eye size={18} />
-                    </button>
-
-                    <button
-                      onClick={() => generatePDF(invoice, "print")}
-                      disabled={loadingInvoiceId === invoice.id}
-                      className="text-gray-500 hover:text-gray-800 p-2"
-                    >
-                      <Printer size={18} />
-                    </button>
-
-                    <button
-                      onClick={() => generatePDF(invoice, "download")}
-                      disabled={loadingInvoiceId === invoice.id}
-                      className="text-gray-500 hover:text-yellow-600 p-2"
-                    >
-                      {loadingInvoiceId === invoice.id ? (
-                        <Loader2 size={18} className="animate-spin" />
-                      ) : (
-                        <Download size={18} />
+                  <td className="px-6 py-4 text-center">
+                    <div className="flex items-center justify-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                      {Number(inv.balanceDue) > 0 && (
+                        <button
+                          onClick={() => setPaymentModal(inv)}
+                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg tooltip"
+                          title="Add Payment"
+                        >
+                          <IndianRupee size={18} />
+                        </button>
                       )}
-                    </button>
+                      <button
+                        onClick={() => generatePDF(inv, "view")}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                        title="View PDF"
+                      >
+                        {loadingInvoiceId === inv.id ? (
+                          <Loader2 className="animate-spin" size={18} />
+                        ) : (
+                          <Eye size={18} />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => generatePDF(inv, "download")}
+                        className="p-2 text-yellow-600 hover:bg-yellow-50 rounded-lg"
+                        title="Download"
+                      >
+                        <Download size={18} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteInvoice(inv.id)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                        title="Delete Invoice"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
               {paginatedInvoices.length === 0 && (
                 <tr>
                   <td
-                    colSpan={6}
-                    className="px-6 py-6 text-center text-gray-400 text-sm"
+                    colSpan="6"
+                    className="px-6 py-10 text-center text-gray-400"
                   >
                     No invoices found.
                   </td>
@@ -1199,24 +1143,32 @@ const Billing = () => {
           </table>
         </div>
 
+        {/* Pagination */}
         {filteredInvoices.length > itemsPerPage && (
-          <div className="flex justify-between items-center px-4 py-3 border-t text-sm text-gray-600">
+          <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="px-3 py-1 rounded border disabled:opacity-50"
+              className="px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium text-gray-600"
             >
-              Prev
+              Previous
             </button>
-            <span>
-              Page {page} of {totalPages}
+            <span className="text-sm text-gray-500">
+              Page {page} of {Math.ceil(filteredInvoices.length / itemsPerPage)}
             </span>
             <button
               onClick={() =>
-                setPage((p) => Math.min(totalPages, p + 1))
+                setPage((p) =>
+                  Math.min(
+                    Math.ceil(filteredInvoices.length / itemsPerPage),
+                    p + 1
+                  )
+                )
               }
-              disabled={page === totalPages}
-              className="px-3 py-1 rounded border disabled:opacity-50"
+              disabled={
+                page >= Math.ceil(filteredInvoices.length / itemsPerPage)
+              }
+              className="px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium text-gray-600"
             >
               Next
             </button>
@@ -1224,147 +1176,132 @@ const Billing = () => {
         )}
       </div>
 
-      {/* New Invoice Modal */}
+      {/* 🔹 CREATE INVOICE MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-2 md:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden">
-            <div className="bg-gradient-to-r from-yellow-50 to-white p-4 md:p-6 border-b flex justify-between items-center">
-              <div>
-                <h3 className="text-xl md:text-2xl font-bold text-gray-800">
-                  New Invoice
-                </h3>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+              <h3 className="text-xl font-bold text-gray-800">
+                Create New Invoice
+              </h3>
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="text-gray-400 hover:text-red-500 transition"
               >
-                <X size={28} />
+                <X size={24} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-gray-50/50">
-              <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
-                <h4 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
-                  Customer Details
+            <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50 space-y-6">
+              {/* Customer Info */}
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+                <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4">
+                  Customer Information
                 </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className={labelStyle}>Customer Name</label>
-                    <input
-                      type="text"
-                      className={inputStyle}
-                      value={customer.name}
-                      onChange={(e) =>
-                        setCustomer({ ...customer, name: e.target.value })
-                      }
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  <input
+                    type="text"
+                    placeholder="Customer Name *"
+                    className="input-field"
+                    value={customer.name}
+                    onChange={(e) =>
+                      setCustomer({ ...customer, name: e.target.value })
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="Phone Number"
+                    className="input-field"
+                    value={customer.contact}
+                    onChange={(e) =>
+                      setCustomer({ ...customer, contact: e.target.value })
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="Address"
+                    className="input-field"
+                    value={customer.address}
+                    onChange={(e) =>
+                      setCustomer({ ...customer, address: e.target.value })
+                    }
+                  />
+                  <input
+                    type="date"
+                    className="input-field"
+                    value={invoiceDate}
+                    onChange={(e) => setInvoiceDate(e.target.value)}
+                  />
+                  <input
+                    type="time"
+                    className="input-field"
+                    value={invoiceTime}
+                    onChange={(e) => setInvoiceTime(e.target.value)}
+                  />
+
+                  <div className="relative">
+                    <select
+                      className="input-field appearance-none"
+                      value={paymentMode}
+                      onChange={(e) => setPaymentMode(e.target.value)}
+                    >
+                      <option>Cash</option>
+                      <option>UPI</option>
+                      <option>Card</option>
+                      <option>Bank Transfer</option>
+                    </select>
+                    <ChevronDown
+                      size={16}
+                      className="absolute right-3 top-3.5 text-gray-400 pointer-events-none"
                     />
                   </div>
-                  <div>
-                    <label className={labelStyle}>Phone Number</label>
-                    <input
-                      type="text"
-                      className={inputStyle}
-                      value={customer.contact}
-                      onChange={(e) =>
-                        setCustomer({ ...customer, contact: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className={labelStyle}>Address</label>
-                    <input
-                      type="text"
-                      className={inputStyle}
-                      value={customer.address}
-                      onChange={(e) =>
-                        setCustomer({ ...customer, address: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className={labelStyle}>Invoice Date</label>
-                    <input
-                      type="date"
-                      className={inputStyle}
-                      value={invoiceDate}
-                      onChange={(e) => setInvoiceDate(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelStyle}>Invoice Time</label>
-                    <input
-                      type="time"
-                      className={inputStyle}
-                      value={invoiceTime}
-                      onChange={(e) => setInvoiceTime(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelStyle}>Payment Mode</label>
-                    <div className="relative">
-                      <select
-                        className={`${inputStyle} appearance-none`}
-                        value={paymentMode}
-                        onChange={(e) => setPaymentMode(e.target.value)}
-                      >
-                        <option>Cash</option>
-                        <option>UPI</option>
-                        <option>Card</option>
-                        <option>Bank Transfer</option>
-                      </select>
-                      <ChevronDown
-                        size={16}
-                        className="absolute right-3 top-3 text-gray-400 pointer-events-none"
-                      />
-                    </div>
-                  </div>
+
                   {paymentMode !== "Cash" && (
-                    <div>
-                      <label className={labelStyle}>
-                        Transaction ID / UTR
-                      </label>
-                      <input
-                        type="text"
-                        className={inputStyle}
-                        value={utr}
-                        onChange={(e) => setUtr(e.target.value)}
-                        placeholder="Enter UTR / Txn ID"
-                      />
-                    </div>
+                    <input
+                      type="text"
+                      placeholder="UTR / Transaction ID"
+                      className="input-field"
+                      value={utr}
+                      onChange={(e) => setUtr(e.target.value)}
+                    />
                   )}
-                  {/* ✅ IGST Toggle */}
-                  <div className="col-span-1 md:col-span-3">
-                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={isIGSTEnabled}
-                        onChange={(e) => setIsIGSTEnabled(e.target.checked)}
-                        className="w-4 h-4 accent-yellow-600"
-                      />
-                      Add IGST (18%)
+
+                  <div className="md:col-span-3 flex items-center gap-2 pt-2">
+                    <input
+                      type="checkbox"
+                      id="igst"
+                      checked={isIGSTEnabled}
+                      onChange={(e) => setIsIGSTEnabled(e.target.checked)}
+                      className="w-4 h-4 text-yellow-600 rounded focus:ring-yellow-500"
+                    />
+                    <label
+                      htmlFor="igst"
+                      className="text-sm font-medium text-gray-700"
+                    >
+                      Enable IGST (18%)
                     </label>
                   </div>
                 </div>
               </div>
 
-              {/* Add Products Section */}
-              <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
-                <h4 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
-                  Add Products
+              {/* Items Section */}
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+                <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4">
+                  Add Items
                 </h4>
-
                 <form
                   onSubmit={handleAddNewItem}
-                  className="grid grid-cols-2 md:grid-cols-12 gap-4 items-end bg-gray-50 p-4 rounded-lg border border-gray-200"
+                  className="grid grid-cols-2 md:grid-cols-12 gap-4 items-end"
                 >
                   <div
                     className="col-span-2 md:col-span-3 relative"
                     ref={suggestionsRef}
                   >
-                    <label className={labelStyle}>Product Name</label>
+                    <label className="label">Item Name</label>
                     <input
                       type="text"
-                      className={inputStyle}
+                      className="input-field"
+                      placeholder="Search..."
                       value={productQuery || itemName}
                       onChange={(e) => {
                         setProductQuery(e.target.value);
@@ -1373,104 +1310,92 @@ const Billing = () => {
                       onFocus={() => {
                         if (productQuery) setShowSuggestions(true);
                       }}
-                      placeholder="Type product name..."
                     />
                     {showSuggestions && suggestions.length > 0 && (
-                      <ul className="absolute z-50 mt-1 w-full bg-white rounded-md shadow-lg max-h-44 overflow-auto border border-gray-200">
+                      <ul className="absolute z-10 w-full bg-white border border-gray-200 mt-1 rounded-lg shadow-xl max-h-48 overflow-auto">
                         {suggestions.map((s) => (
                           <li
                             key={s.id}
-                            className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex justify-between"
+                            className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm flex justify-between"
                             onClick={() => {
-                              // IMPORTANT: set itemStockType from selected stock
                               setItemName(s.name);
                               setProductQuery(s.name);
                               setItemHsn(s.hsnCode || itemHsn);
                               setItemHuc(s.huid || "");
-                              setItemStockType(s.stockType || "white"); // <-- NEW
+                              setItemStockType(s.stockType || "white");
                               setShowSuggestions(false);
                             }}
                           >
-                            <span>{s.name}</span>
-                            {s.totalWeight !== undefined && (
-                              <span className="text-xs text-gray-500">
-                                {s.totalWeight} g in stock
-                              </span>
-                            )}
+                            <span>{s.name}</span>{" "}
+                            <span className="text-gray-400 text-xs">
+                              {s.totalWeight}g
+                            </span>
                           </li>
                         ))}
                       </ul>
                     )}
                   </div>
-
-                  <div className="col-span-1">
-                    <label className={labelStyle}>HSN Code</label>
+                  <div className="col-span-1 md:col-span-1">
+                    <label className="label">HSN</label>
                     <input
                       type="text"
-                      className={inputStyle}
+                      className="input-field"
                       value={itemHsn}
                       onChange={(e) => setItemHsn(e.target.value)}
                     />
                   </div>
-
                   <div className="col-span-1 md:col-span-2">
-                    <label className={labelStyle}>HUC ID</label>
+                    <label className="label">HUC</label>
                     <input
                       type="text"
-                      className={inputStyle}
+                      className="input-field"
                       value={itemHuc}
                       onChange={(e) => setItemHuc(e.target.value)}
                     />
                   </div>
-
-                  <div className="col-span-1">
-                    <label className={labelStyle}>Weight (g)</label>
+                  <div className="col-span-1 md:col-span-1">
+                    <label className="label">Wt (g)</label>
                     <input
                       type="number"
-                      className={inputStyle}
+                      className="input-field"
                       value={itemWeight}
                       onChange={(e) => setItemWeight(e.target.value)}
                     />
                   </div>
-
-                  <div className="col-span-1 md:col-span-2">
-                    <label className={labelStyle}>Rate/g</label>
+                  <div className="col-span-1 md:col-span-1">
+                    <label className="label">Rate</label>
                     <input
                       type="number"
-                      className={inputStyle}
+                      className="input-field"
                       value={itemRate}
                       onChange={(e) => setItemRate(e.target.value)}
                     />
                   </div>
-
-                  <div className="col-span-2 md:col-span-2">
-                    <label className={labelStyle}>Making/g</label>
+                  <div className="col-span-1 md:col-span-1">
+                    <label className="label">Making</label>
                     <input
                       type="number"
-                      className={inputStyle}
+                      className="input-field"
                       value={itemMaking}
                       onChange={(e) => setItemMaking(e.target.value)}
                     />
                   </div>
-
-                  {/* Optional: show current selected stockType for clarity */}
-                  <div className="col-span-2 md:col-span-1">
-                    <label className={labelStyle}>Stock Type</label>
+                  <div className="col-span-2 md:col-span-2">
+                    <label className="label">Stock Type</label>
                     <select
-                      className={inputStyle}
+                      className="input-field"
                       value={itemStockType}
                       onChange={(e) => setItemStockType(e.target.value)}
                     >
                       <option value="">Auto</option>
-                      <option value="white">White (GST)</option>
-                      <option value="black">Black (No GST)</option>
+                      <option value="white">White</option>
+                      <option value="black">Black</option>
                     </select>
                   </div>
-
                   <div className="col-span-2 md:col-span-1">
                     <button
                       type="submit"
-                      className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 flex justify-center shadow-md"
+                      className="w-full bg-blue-600 text-white py-2.5 rounded-lg hover:bg-blue-700 shadow-sm flex justify-center"
                     >
                       <Plus size={20} />
                     </button>
@@ -1478,42 +1403,36 @@ const Billing = () => {
                 </form>
 
                 {newItems.length > 0 && (
-                  <div className="mt-4 border rounded-lg overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200 text-sm">
-                      <thead className="bg-gray-100 text-gray-600">
+                  <div className="mt-6 border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-gray-500">
                         <tr>
                           <th className="px-4 py-2 text-left">Item</th>
-                          <th className="px-4 py-2 text-right">Wt(g)</th>
+                          <th className="px-4 py-2 text-right">Wt</th>
                           <th className="px-4 py-2 text-right">Rate</th>
-                          <th className="px-4 py-2 text-right">Making</th>
                           <th className="px-4 py-2 text-right">Total</th>
-                          <th className="px-4 py-2 text-right">Type</th>
                           <th className="px-4 py-2"></th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100">
+                      <tbody>
                         {newItems.map((item, idx) => (
-                          <tr key={idx}>
-                            <td className="px-4 py-2 font-medium">{item.name}</td>
-                            <td className="px-4 py-2 text-right">
-                              {item.weight}
+                          <tr key={idx} className="border-t border-gray-50">
+                            <td className="px-4 py-2 font-medium">
+                              {item.name}
                             </td>
-                            <td className="px-4 py-2 text-right">{item.rate}</td>
                             <td className="px-4 py-2 text-right">
-                              {item.makingCharge}
+                              {item.weight}g
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              {item.rate}
                             </td>
                             <td className="px-4 py-2 text-right font-bold">
                               {formatCurrency(item.amount)}
                             </td>
                             <td className="px-4 py-2 text-right">
-                              <span className="text-xs px-2 py-1 rounded bg-gray-100">
-                                {item.stockType || "white"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2 text-right">
                               <button
                                 onClick={() => handleRemoveNewItem(idx)}
-                                className="text-red-500"
+                                className="text-red-500 hover:text-red-700"
                               >
                                 <Trash2 size={16} />
                               </button>
@@ -1526,221 +1445,201 @@ const Billing = () => {
                 )}
               </div>
 
-              {/* Old Items / Exchange */}
-              <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
-                <div
-                  className="flex items-center mb-4 cursor-pointer"
-                  onClick={() => setShowOldItems(!showOldItems)}
-                >
-                  {showOldItems ? (
-                    <CheckCircle className="text-green-500 mr-2" />
-                  ) : (
-                    <div className="w-5 h-5 border-2 border-gray-300 rounded mr-2"></div>
-                  )}
-                  <span className="font-bold text-gray-700">
-                    Include Old Product Exchange
-                  </span>
-                </div>
-                {showOldItems && (
-                  <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-                    <form
-                      onSubmit={handleAddOldItem}
-                      className="flex flex-col md:flex-row gap-4 items-end"
+              {/* Summary Section */}
+              <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm flex flex-col md:flex-row gap-8">
+                <div className="flex-1 space-y-4">
+                  <div
+                    onClick={() => setShowOldItems(!showOldItems)}
+                    className="flex items-center cursor-pointer gap-2 text-gray-700 font-medium select-none"
+                  >
+                    <div
+                      className={`w-5 h-5 rounded border flex items-center justify-center ${
+                        showOldItems
+                          ? "bg-green-500 border-green-500 text-white"
+                          : "border-gray-300"
+                      }`}
                     >
-                      <div className="flex-1 w-full">
-                        <label className={labelStyle}>Item Name</label>
+                      {showOldItems && <CheckCircle size={14} />}
+                    </div>
+                    Include Old Gold Exchange
+                  </div>
+
+                  {showOldItems && (
+                    <div className="bg-red-50 p-4 rounded-lg border border-red-100 space-y-3">
+                      <div className="flex gap-2">
                         <input
                           type="text"
-                          className={inputStyle}
+                          placeholder="Item"
+                          className="input-field bg-white"
                           value={oldItemName}
                           onChange={(e) => setOldItemName(e.target.value)}
                         />
-                      </div>
-                      <div className="w-full md:w-24">
-                        <label className={labelStyle}>Wt(g)</label>
                         <input
                           type="number"
-                          className={inputStyle}
+                          placeholder="Wt"
+                          className="input-field bg-white w-20"
                           value={oldItemWeight}
                           onChange={(e) => setOldItemWeight(e.target.value)}
                         />
-                      </div>
-                      <div className="w-full md:w-32">
-                        <label className={labelStyle}>Rate/g</label>
                         <input
                           type="number"
-                          className={inputStyle}
+                          placeholder="Rate"
+                          className="input-field bg-white w-24"
                           value={oldItemRate}
                           onChange={(e) => setOldItemRate(e.target.value)}
                         />
+                        <button
+                          onClick={handleAddOldItem}
+                          className="bg-gray-800 text-white px-3 rounded-lg"
+                        >
+                          <Plus size={18} />
+                        </button>
                       </div>
-                      <button
-                        type="submit"
-                        className="bg-gray-700 text-white p-2 rounded-lg w-full md:w-auto flex justify-center"
-                      >
-                        <Plus size={20} />
-                      </button>
-                    </form>
-                    {oldItems.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="flex justify-between items-center mt-2 p-2 bg-white rounded border border-gray-200 text-sm"
-                      >
-                        <span>
-                          {item.name} ({item.weight}g @ {item.rate})
-                        </span>
-                        <div className="flex items-center gap-4">
-                          <span className="font-bold text-red-600">
-                            - {formatCurrency(item.amount)}
+                      {oldItems.map((item, idx) => (
+                        <div
+                          key={idx}
+                          className="flex justify-between text-sm text-red-700 bg-white p-2 rounded border border-red-100"
+                        >
+                          <span>
+                            {item.name} ({item.weight}g)
                           </span>
-                          <button
-                            onClick={() => handleRemoveOldItem(idx)}
-                            className="text-gray-400 hover:text-red-500"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold">
+                              - {formatCurrency(item.amount)}
+                            </span>
+                            <button onClick={() => handleRemoveOldItem(idx)}>
+                              <X size={14} />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-              {/* SUMMARY & ACTIONS */}
-              <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200">
-                <div className="flex flex-col md:flex-row justify-between items-end gap-6">
-                  <div className="w-full md:w-1/2 grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={labelStyle}>Discount (Rs.)</label>
-                      <input
-                        type="number"
-                        className={inputStyle}
-                        placeholder="0"
-                        value={discount}
-                        onChange={(e) => setDiscount(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className={labelStyle}>Received Amount (Rs.)</label>
-                      <input
-                        type="number"
-                        className={`${inputStyle} border-green-400 bg-green-50`}
-                        placeholder="0"
-                        value={receivedAmount}
-                        max={grandTotal}
-                        onChange={(e) => setReceivedAmount(e.target.value)}
-                      />
-                    </div>
+                <div className="w-full md:w-80 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500">Subtotal</span>
+                    <span className="font-medium text-gray-900">
+                      {formatCurrency(subTotal)}
+                    </span>
                   </div>
-                  <div className="w-full md:w-1/3 space-y-2 text-right">
-                    <div className="flex justify-between text-gray-600 text-sm">
-                      <span>Subtotal:</span>{" "}
-                      <span>{formatCurrency(subTotal)}</span>
-                    </div>
-                    {Number(discount) > 0 && (
-                      <div className="flex justify-between text-red-500 text-sm">
-                        <span>Discount:</span>{" "}
-                        <span>- {formatCurrency(discount)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-gray-500 text-xs">
-                      <span>CGST (9%):</span>{" "}
-                      <span>{formatCurrency(cgst)}</span>
-                    </div>
-                    <div className="flex justify-between text-gray-500 text-xs">
-                      <span>SGST (9%):</span>{" "}
-                      <span>{formatCurrency(sgst)}</span>
-                    </div>
-                    {/* ✅ IGST in UI */}
-                    {isIGSTEnabled && (
-                      <div className="flex justify-between text-gray-500 text-xs">
-                        <span>IGST (18%):</span>{" "}
-                        <span>{formatCurrency(igstAmount)}</span>
-                      </div>
-                    )}
-                    <div className="h-px bg-gray-200 my-1"></div>
-                    <div className="flex justify-between text-xl font-bold text-gray-800">
-                      <span>Grand Total:</span>{" "}
-                      <span>{formatCurrency(grandTotal)}</span>
-                    </div>
-                    <div
-                      className={`flex justify-between items-center p-3 rounded-lg mt-2 ${balanceDue > 0
-                        ? "bg-red-100 text-red-800"
-                        : "bg-green-100 text-green-800"
-                        }`}
-                    >
-                      <span className="font-bold text-sm">
-                        {balanceDue > 0 ? "Balance Due (Baaki):" : "Fully Paid:"}
-                      </span>
-                      <span className="font-bold text-lg">
-                        {formatCurrency(balanceDue > 0 ? balanceDue : 0)}
-                      </span>
-                    </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500">Discount</span>
+                    <input
+                      type="number"
+                      className="w-24 text-right border rounded p-1 text-sm"
+                      placeholder="0"
+                      value={discount}
+                      onChange={(e) => setDiscount(e.target.value)}
+                    />
                   </div>
-                </div>
-                <div className="mt-6 flex gap-4 justify-end pb-10">
-                  <button
-                    onClick={() => setIsModalOpen(false)}
-                    className="px-6 py-3 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200"
+                  <div className="flex justify-between items-center text-sm text-gray-500">
+                    <span>CGST (9%)</span>
+                    <span>{formatCurrency(cgst)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm text-gray-500">
+                    <span>SGST (9%)</span>
+                    <span>{formatCurrency(sgst)}</span>
+                  </div>
+                  {isIGSTEnabled && (
+                    <div className="flex justify-between items-center text-sm text-gray-500">
+                      <span>IGST (18%)</span>
+                      <span>{formatCurrency(igstAmount)}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-gray-200 pt-3 flex justify-between items-center">
+                    <span className="text-lg font-bold text-gray-800">
+                      Grand Total
+                    </span>
+                    <span className="text-xl font-extrabold text-yellow-600">
+                      {formatCurrency(grandTotal)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2">
+                    <span className="font-medium text-gray-700">Received</span>
+                    <input
+                      type="number"
+                      className="w-32 text-right border border-green-300 bg-green-50 rounded p-1.5 font-bold text-green-700 outline-none focus:ring-2 focus:ring-green-500"
+                      placeholder="0"
+                      value={receivedAmount}
+                      onChange={(e) => setReceivedAmount(e.target.value)}
+                    />
+                  </div>
+                  <div
+                    className={`text-right text-sm font-bold mt-1 ${
+                      balanceDue > 0 ? "text-red-600" : "text-green-600"
+                    }`}
                   >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveInvoice}
-                    className={`${btnPrimary} px-8 text-lg shadow-xl`}
-                  >
-                    Save & Generate
-                  </button>
+                    {balanceDue > 0
+                      ? `Balance Due: ${formatCurrency(balanceDue)}`
+                      : "Fully Paid"}
+                  </div>
                 </div>
               </div>
+            </div>
+
+            <div className="p-4 border-t bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="px-6 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold rounded-xl hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveInvoice}
+                className="px-8 py-2.5 bg-yellow-600 text-white font-bold rounded-xl shadow-lg hover:bg-yellow-700 flex items-center gap-2"
+              >
+                <Printer size={18} /> Save & Print
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Payment Modal */}
+      {/* 🔹 PAYMENT MODAL */}
       {paymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="text-lg font-bold text-gray-800">
-                Add Payment - {paymentModal.invoiceNo || paymentModal.id}
-              </h3>
-              <button
-                onClick={() => setPaymentModal(null)}
-                className="text-gray-400 hover:text-red-500"
-              >
-                <X size={22} />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-6 relative">
+            <button
+              onClick={() => setPaymentModal(null)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-red-500"
+            >
+              <X size={24} />
+            </button>
+            <h3 className="text-xl font-bold text-gray-800 mb-1">
+              Add Payment
+            </h3>
+            <p className="text-sm text-gray-500 mb-6">
+              Invoice:{" "}
+              <span className="font-mono font-medium text-gray-700">
+                {paymentModal.invoiceNo}
+              </span>
+            </p>
 
-            <div className="text-sm text-gray-600 space-y-1 mb-3">
-              <div>
-                <span className="font-semibold">Customer: </span>
-                {paymentModal.customer?.name}
+            <div className="space-y-4">
+              <div className="flex justify-between text-sm bg-red-50 p-3 rounded-lg border border-red-100 text-red-700">
+                <span className="font-semibold">Current Due</span>
+                <span className="font-bold text-lg">
+                  {formatCurrency(paymentModal.balanceDue)}
+                </span>
               </div>
-              <div>
-                <span className="font-semibold">Current Due: </span>
-                {formatCurrency(paymentModal.balanceDue)}
-              </div>
-            </div>
 
-            <div className="space-y-3">
               <div>
-                <label className={labelStyle}>Pay Amount</label>
+                <label className="label">Amount to Pay</label>
                 <input
                   type="number"
-                  className={inputStyle}
-                  placeholder="Enter amount"
+                  className="input-field text-lg font-bold"
+                  placeholder="0"
                   value={payAmount}
-                  max={paymentModal?.balanceDue || undefined}
                   onChange={(e) => setPayAmount(e.target.value)}
                 />
               </div>
+
               <div>
-                <label className={labelStyle}>Payment Mode</label>
+                <label className="label">Mode</label>
                 <select
-                  className={inputStyle}
+                  className="input-field"
                   value={payMode}
                   onChange={(e) => setPayMode(e.target.value)}
                 >
@@ -1750,37 +1649,55 @@ const Billing = () => {
                   <option>Bank Transfer</option>
                 </select>
               </div>
+
               {payMode !== "Cash" && (
                 <div>
-                  <label className={labelStyle}>UTR / Transaction ID</label>
+                  <label className="label">UTR / Ref No</label>
                   <input
                     type="text"
-                    className={inputStyle}
-                    placeholder="Enter UTR / Txn ID"
+                    className="input-field"
                     value={payUtr}
                     onChange={(e) => setPayUtr(e.target.value)}
                   />
                 </div>
               )}
-            </div>
 
-            <div className="flex justify-end gap-3 mt-4">
-              <button
-                onClick={() => setPaymentModal(null)}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-semibold"
-              >
-                Cancel
-              </button>
               <button
                 onClick={handleAddPayment}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-semibold flex items-center gap-1"
+                className="w-full py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 shadow-lg mt-2"
               >
-                <CheckCircle size={16} /> Save Payment
+                Confirm Payment
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <style>{`
+        .input-field {
+          width: 100%;
+          padding: 10px 12px;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          outline: none;
+          transition: all 0.2s;
+          background: #fff;
+          font-size: 0.95rem;
+        }
+        .input-field:focus {
+          border-color: #ca8a04;
+          box-shadow: 0 0 0 3px rgba(202, 138, 4, 0.1);
+        }
+        .label {
+          display: block;
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #6b7280;
+          text-transform: uppercase;
+          margin-bottom: 4px;
+          letter-spacing: 0.025em;
+        }
+      `}</style>
     </div>
   );
 };

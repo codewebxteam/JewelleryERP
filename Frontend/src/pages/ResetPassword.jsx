@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "../firebase";
 import { useNavigate } from "react-router-dom";
-import logo from "../assets/logo.png";
+import logo from "../assets/logo.webp";
 
 const SHOP_NAME = "Shree Ganesh Jewellery";
 
