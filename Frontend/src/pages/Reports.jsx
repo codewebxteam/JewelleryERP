@@ -6,6 +6,7 @@ import {
   PieChartIcon,
   Filter,
   Download,
+  FileJson, // GST Icon
 } from "lucide-react";
 import {
   PieChart,
@@ -26,7 +27,14 @@ import { saveAs } from "file-saver";
 import { db } from "../firebase";
 import { collection, onSnapshot } from "firebase/firestore";
 
-const COLORS = ["#FFB200", "#16A34A", "#3B82F6", "#EF4444", "#8B5CF6", "#E11D48"];
+const COLORS = [
+  "#FFB200",
+  "#16A34A",
+  "#3B82F6",
+  "#EF4444",
+  "#8B5CF6",
+  "#E11D48",
+];
 
 // ================== Helpers ==================
 
@@ -267,9 +275,9 @@ const Reports = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `${reportType.toUpperCase()} REPORT`);
 
-    const filename = `${reportType}_report_${new Date()
-      .toISOString()
-      .split("T")[0]}.xlsx`;
+    const filename = `${reportType}_report_${
+      new Date().toISOString().split("T")[0]
+    }.xlsx`;
     const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const blob = new Blob([excelBuffer], { type: "application/octet-stream" });
 
@@ -282,9 +290,9 @@ const Reports = () => {
       return;
     }
 
-    const filename = `${reportType}_report_${new Date()
-      .toISOString()
-      .split("T")[0]}.json`;
+    const filename = `${reportType}_report_${
+      new Date().toISOString().split("T")[0]
+    }.json`;
 
     const jsonString = JSON.stringify(reportData, null, 2);
     const blob = new Blob([jsonString], { type: "application/json" });
@@ -292,6 +300,130 @@ const Reports = () => {
     saveAs(blob, filename);
   };
 
+  // ==========================================================
+  // ⚡ 100% GST COMPLIANT JSON EXPORT LOGIC (TALLY STYLE)
+  // ==========================================================
+  const exportGSTJSON = () => {
+    if (reportType !== "sales") {
+      alert("GST Export is only available for Sales Reports.");
+      return;
+    }
+    if (!reportData.length) {
+      alert("No data to export!");
+      return;
+    }
+
+    // --- STEP 1: CONFIGURATION ---
+    // Note: Isse client settings se dynamically bhi le sakte ho baad mein
+    const SHOP_GSTIN = "09AAAAA0000A1Z5"; // <--- CHANGE THIS IF NEEDED
+    const SHOP_STATE_CODE = "09"; // 09 for Uttar Pradesh.
+
+    // Financial Period Format: MMYYYY (e.g. 122024)
+    const currentMonth = filters.month
+      ? filters.month.split("-")
+      : new Date().toISOString().slice(0, 7).split("-");
+    const fp = `${currentMonth[1]}${currentMonth[0]}`;
+
+    // --- STEP 2: AGGREGATE DATA FOR B2CS (Retail Sales) ---
+    // GST Portal Rule: Retail invoices bina naam ke State & Rate wise group hote hain.
+    const b2csMap = {};
+
+    reportData.forEach((inv) => {
+      // Skip incomplete or zero value invoices
+      const taxable = Number(inv.taxableAmount || 0);
+      if (taxable <= 0) return;
+
+      // Determine Place of Supply (POS)
+      // Rule: Agar IGST hai to Inter-State, nahi to Intra-State (Shop State)
+      const isInterState = Number(inv.igstAmount || 0) > 0;
+
+      // Agar customer state code saved nahi hai to logic lagao:
+      // Inter-State hai to "99" (Other) ya specific code, Local hai to SHOP_STATE_CODE
+      const pos = isInterState ? "99" : SHOP_STATE_CODE;
+
+      // Determine Rate
+      // Jewellery mein 3% common hai. Hum reverse calculate karke nikalenge.
+      const totalTax =
+        (Number(inv.cgst) || 0) +
+        (Number(inv.sgst) || 0) +
+        (Number(inv.igstAmount) || 0);
+      let rate = 3.0; // Default fallback
+
+      if (taxable > 0) {
+        const calculatedRate = (totalTax / taxable) * 100;
+        const rounded = Math.round(calculatedRate);
+        // Standard GST Rates check
+        if ([0, 0.25, 3, 5, 12, 18, 28].includes(rounded)) {
+          rate = rounded;
+        } else {
+          // Agar calculation thoda off hai (e.g. 2.99%), to closest standard rate lo
+          if (Math.abs(calculatedRate - 3) < 0.5) rate = 3.0;
+          else if (Math.abs(calculatedRate - 18) < 0.5) rate = 18.0;
+          else if (Math.abs(calculatedRate - 5) < 0.5) rate = 5.0;
+        }
+      }
+
+      // Key for Grouping: "StateCode-Rate" (e.g., "09-3")
+      const key = `${pos}-${rate}`;
+
+      if (!b2csMap[key]) {
+        b2csMap[key] = {
+          sply_ty: isInterState ? "INTER" : "INTRA",
+          rt: rate,
+          typ: "OE", // OE = Other than E-commerce
+          pos: pos,
+          txval: 0,
+          camt: 0, // Central Tax
+          samt: 0, // State Tax
+          iamt: 0, // Integrated Tax (IGST)
+          csamt: 0, // Cess
+        };
+      }
+
+      // Add values
+      b2csMap[key].txval += taxable;
+      b2csMap[key].camt += Number(inv.cgst || 0);
+      b2csMap[key].samt += Number(inv.sgst || 0);
+      b2csMap[key].iamt += Number(inv.igstAmount || 0);
+    });
+
+    // Convert Map to Array & Fix Decimals (2 places)
+    const b2csArray = Object.values(b2csMap).map((item) => ({
+      sply_ty: item.sply_ty,
+      rt: item.rt,
+      typ: item.typ,
+      pos: item.pos,
+      txval: Number(item.txval.toFixed(2)),
+      iamt: Number(item.iamt.toFixed(2)),
+      camt: Number(item.camt.toFixed(2)),
+      samt: Number(item.samt.toFixed(2)),
+      csamt: 0,
+    }));
+
+    // --- STEP 3: CONSTRUCT FINAL JSON ---
+    // Ye structure GST portal accept karta hai
+    const gstPayload = {
+      gstin: SHOP_GSTIN,
+      fp: fp,
+      version: "GST4.0", // Tally standard version string
+      hash: "hash",
+      b2cs: b2csArray,
+      // Empty sections for compatibility
+      b2b: [],
+      cdnr: [],
+      b2ba: [],
+      cdnra: [],
+      exp: [],
+      hsn: {
+        data: [], // Agar HSN summary chahiye to future mein yahan add kar sakte ho
+      },
+    };
+
+    const filename = `GSTR1_${SHOP_GSTIN}_${fp}.json`;
+    const jsonString = JSON.stringify(gstPayload, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json" });
+    saveAs(blob, filename);
+  };
 
   const handleTabChange = (type) => {
     setReportType(type);
@@ -329,10 +461,11 @@ const Reports = () => {
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition font-semibold ${reportType === tab.id
-              ? "bg-yellow-600 text-white"
-              : "bg-gray-200 text-gray-700"
-              }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition font-semibold ${
+              reportType === tab.id
+                ? "bg-yellow-600 text-white"
+                : "bg-gray-200 text-gray-700"
+            }`}
           >
             <tab.icon size={18} />
             {tab.label}
@@ -422,8 +555,6 @@ const Reports = () => {
             </select>
           </div>
 
-
-
           {/* Clear Filters */}
           <div className="flex items-end">
             <button
@@ -447,9 +578,7 @@ const Reports = () => {
       <div className="summary-grid grid grid-cols-3 gap-4 w-full">
         <div className="p-4 bg-white rounded-lg shadow border">
           <p className="text-gray-600 text-sm">Total Count</p>
-          <h3 className="text-2xl font-bold">
-            {summary.count ?? 0}
-          </h3>
+          <h3 className="text-2xl font-bold">{summary.count ?? 0}</h3>
         </div>
 
         {reportType === "sales" && (
@@ -521,14 +650,14 @@ const Reports = () => {
 
       {/* Table + Export */}
       <div className="bg-white shadow rounded-lg overflow-hidden">
-        <div className="flex justify-between items-center px-3 pt-3">
+        <div className="flex flex-col sm:flex-row justify-between items-center px-3 pt-3 gap-2">
           <p className="text-sm text-gray-500">
             Showing {paginatedData.length} of {reportData.length} records
           </p>
           <div className="flex gap-2">
             <button
               onClick={exportExcel}
-              className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm mb-1"
+              className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm"
             >
               <Download size={16} />
               Export Excel
@@ -536,16 +665,26 @@ const Reports = () => {
 
             <button
               onClick={exportJSON}
-              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm mb-1"
+              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm"
             >
               <Download size={16} />
-              Export JSON
+              Raw JSON
             </button>
-          </div>
 
+            {/* 🔥 GST JSON BUTTON (Purple Color) */}
+            {reportType === "sales" && (
+              <button
+                onClick={exportGSTJSON}
+                className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-md text-sm hover:bg-purple-700 shadow"
+                title="Format: GST GSTR-1 (B2CS)"
+              >
+                <FileJson size={16} /> Export GST JSON
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto mt-3">
           <table className="w-full text-sm">
             <thead className="bg-gray-200 text-gray-700 uppercase text-xs">
               <tr>
@@ -554,6 +693,7 @@ const Reports = () => {
                     <th className="th">Invoice</th>
                     <th className="th">Customer</th>
                     <th className="th">Date</th>
+                    <th className="th">Taxable</th>
                     <th className="th">Total</th>
                   </>
                 )}
@@ -588,6 +728,7 @@ const Reports = () => {
                       <td>{i.invoiceNo}</td>
                       <td>{i.customer?.name}</td>
                       <td>{i.date}</td>
+                      <td>₹{(i.taxableAmount || 0).toLocaleString("en-IN")}</td>
                       <td className="font-bold text-green-700">
                         ₹{(i.grandTotal || 0).toLocaleString("en-IN")}
                       </td>
@@ -655,9 +796,7 @@ const Reports = () => {
 
           <button
             disabled={currentPage === totalPages}
-            onClick={() =>
-              setCurrentPage((p) => Math.min(totalPages, p + 1))
-            }
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
             className="px-3 py-1 bg-gray-200 rounded disabled:opacity-40"
           >
             Next

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { auth } from "../firebase";
 import logo from "../assets/logo.webp";
+import { Loader2 } from "lucide-react"; // ✅ Import Icon
 
 const SHOP_NAME = "Shree Laxmi Jewellers and Sons";
 
@@ -11,13 +12,12 @@ function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true); // Shuru mein loading true rakho
+  const [loading, setLoading] = useState(true);
 
-  // ✅ Check: Agar user pehle se logged in hai, to Dashboard bhej do
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        navigate("/"); // Redirect to Dashboard
+        navigate("/");
       }
       setLoading(false);
     });
@@ -39,10 +39,11 @@ function Login() {
     }
   };
 
+  // Initial Page Load Spinner
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-screen">
-        Loading...
+      <div className="flex flex-col items-center justify-center h-screen bg-gray-50">
+        <Loader2 className="h-10 w-10 text-yellow-600 animate-spin" />
       </div>
     );
   }
@@ -88,14 +89,22 @@ function Login() {
             />
           </div>
 
+          {/* ✅ Button with Spinner */}
           <button
             type="submit"
             disabled={loading}
-            className={`w-full py-2 bg-yellow-500 text-white rounded font-medium hover:bg-yellow-600 shadow ${
-              loading ? "opacity-50 cursor-not-allowed" : ""
+            className={`w-full py-2 bg-yellow-500 text-white rounded font-medium hover:bg-yellow-600 shadow flex items-center justify-center gap-2 ${
+              loading ? "opacity-70 cursor-not-allowed" : ""
             }`}
           >
-            {loading ? "Logging in..." : "Login"}
+            {loading ? (
+              <>
+                <Loader2 className="animate-spin" size={20} />
+                <span>Logging in...</span>
+              </>
+            ) : (
+              "Login"
+            )}
           </button>
         </form>
       </div>

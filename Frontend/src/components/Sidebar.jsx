@@ -70,9 +70,7 @@ const Sidebar = () => {
         </div>
 
         {/* Logout bottom */}
-        <div className="p-4 border-t ">
-          <NavItem to="/login" icon={<LogOut size={25} />} label="Logout" />
-        </div>
+        
       </div>
       
 
