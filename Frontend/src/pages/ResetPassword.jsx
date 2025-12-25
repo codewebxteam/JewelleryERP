@@ -4,7 +4,7 @@ import { auth } from "../firebase";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/logo.webp";
 
-const SHOP_NAME = "Shree Ganesh Jewellery";
+const SHOP_NAME = "Shree Laxmi Jewellers and Sons";
 
 function ResetPassword() {
   const navigate = useNavigate();

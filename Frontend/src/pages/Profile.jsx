@@ -26,8 +26,8 @@ const Profile = () => {
       ? JSON.parse(saved)
       : {
           shopName: "Shree Laxmi Jewellers and Sons",
-          ownerName: "Admin User",
-          email: "admin@example.com", // Ye change nahi hoga
+          ownerName: "",
+          email: "", // Ye change nahi hoga
           phone: "+91 ",
           address: "",
         };
