@@ -167,13 +167,14 @@ const applyFilters = (data, type, filters) => {
   return filtered;
 };
 
-// Export mapping (simple columns, per report type)
+// ✅ FIXED EXPORT MAPPING (Numbers are strictly Numbers now)
 const mapExportData = (data, type) => {
   if (type === "sales") {
     return data.map((i) => {
       const itemSummary = (i.newItems || [])
         .map((item) => `${item.name} (${item.weight}g)`)
         .join(", ");
+
       const totalWt = (i.newItems || []).reduce(
         (acc, item) => acc + Number(item.weight || 0),
         0
@@ -188,16 +189,17 @@ const mapExportData = (data, type) => {
         Address: i.customer?.address || "",
         "Stock Type": i.stockType || "white",
         "Items List": itemSummary,
-        "Total Weight (g)": totalWt.toFixed(2),
-        "Sub Total": i.subTotal || 0,
-        Discount: i.discount || 0,
-        "Taxable Amount (Without Tax)": i.taxableAmount || 0,
-        CGST: i.cgst || 0,
-        SGST: i.sgst || 0,
-        IGST: i.igstAmount || 0,
-        "Grand Total": i.grandTotal || 0,
-        "Received Amount": i.receivedAmount || 0,
-        "Balance Due": i.balanceDue || 0,
+        // ✅ FIX: Converted to Number so Excel can Sum it
+        "Total Weight (g)": Number(totalWt.toFixed(2)),
+        "Sub Total": Number(i.subTotal || 0),
+        Discount: Number(i.discount || 0),
+        "Taxable Amount (Without Tax)": Number(i.taxableAmount || 0),
+        CGST: Number(i.cgst || 0),
+        SGST: Number(i.sgst || 0),
+        IGST: Number(i.igstAmount || 0),
+        "Grand Total": Number(i.grandTotal || 0),
+        "Received Amount": Number(i.receivedAmount || 0),
+        "Balance Due": Number(i.balanceDue || 0),
         "Payment Mode": i.paymentMode || "",
         "UTR/Ref": i.utr || "",
       };
@@ -212,7 +214,7 @@ const mapExportData = (data, type) => {
       HUID: i.huid || "",
       "HSN Code": i.hsnCode || "",
       "Stock Type": i.stockType || "",
-      "Net Weight (g)": i.totalWeight || 0,
+      "Net Weight (g)": Number(i.totalWeight || 0), // Ensure Number
     }));
   }
 
@@ -222,9 +224,9 @@ const mapExportData = (data, type) => {
     "Customer Name": i.customerName || i.customer?.name || i.name || "",
     Mobile: i.phone || i.mobile || "",
     "Item Description": i.itemDescription || "",
-    "Weight (g)": i.weight || 0,
-    "Loan Amount": i.loanAmount || i.amount || 0,
-    "Interest Rate": i.interestRate || 0,
+    "Weight (g)": Number(i.weight || 0), // Ensure Number
+    "Loan Amount": Number(i.loanAmount || i.amount || 0),
+    "Interest Rate": Number(i.interestRate || 0),
     "Start Date": i.startDate || "",
     Status: i.status || "",
   }));
@@ -288,7 +290,7 @@ const Reports = () => {
 
     const filtered = applyFilters(base, reportType, filters);
 
-    // ✅ SORTING APPLIED HERE (Latest First)
+    // ✅ SORTING: Latest First (Descending Date)
     const sortedData = [...filtered].sort((a, b) => {
       const dateA = getItemDateString(a, reportType) || "";
       const dateB = getItemDateString(b, reportType) || "";
@@ -296,7 +298,7 @@ const Reports = () => {
     });
 
     setReportData(sortedData);
-    setCurrentPage(1); // reset page when filters/type change
+    setCurrentPage(1);
 
     if (reportType === "sales") {
       setSummary({
@@ -366,7 +368,7 @@ const Reports = () => {
     saveAs(blob, filename);
   };
 
-  // ✅ SAFE MODE GST EXPORT (Re-calculates Tax to avoid Rounding Errors)
+  // ✅ SAFE MODE GST EXPORT (Offline Tool Compatible)
   const exportGSTJSON = () => {
     if (reportType !== "sales") {
       alert("GST Export is only available for Sales Reports.");
@@ -377,23 +379,19 @@ const Reports = () => {
       return;
     }
 
-    const SHOP_GSTIN = "10AZXPK1966D2ZA"; // Hardcoded GSTIN
+    const SHOP_GSTIN = "10AZXPK1966D2ZA";
 
-    // 1. Format FP (Financial Period MMYYYY)
     const currentMonth = filters.month
       ? filters.month.split("-")
       : new Date().toISOString().slice(0, 7).split("-");
-    // GST Tool expects MMYYYY (e.g., 122025)
     const fp = `${currentMonth[1]}${currentMonth[0]}`;
 
-    // Containers
     const b2csMap = {};
     const hsnMap = {};
     let minInv = null;
     let maxInv = null;
     let totalInvCount = 0;
 
-    // --- PROCESS EACH INVOICE ---
     reportData.forEach((inv) => {
       const invNo = inv.invoiceNo || "";
       if (invNo) {
@@ -402,18 +400,15 @@ const Reports = () => {
         if (!maxInv || invNo > maxInv) maxInv = invNo;
       }
 
-      // ⚠ SAFE MODE: We assume 3% Rate for Jewellery to prevent Mismatches
-      // If you sell mixed items, this logic forces 3% on Taxable Value.
-      // GST Tool will reject if Taxable * Rate != Tax Amount (even by 0.01)
       const taxable = Number(inv.taxableAmount || 0);
 
       if (taxable > 0) {
         const isInterState = Number(inv.igstAmount || 0) > 0;
-        const pos = isInterState ? "99" : "10"; // 10 = Bihar
+        const pos = isInterState ? "99" : "10";
         const sply_ty = isInterState ? "INTER" : "INTRA";
-        const rate = 3.0; // Hardcoded Standard Rate for Gold
+        const rate = 3.0;
 
-        // ⚠ RE-CALCULATE TAX (Don't use invoice values directly to avoid rounding error)
+        // Recalculate strictly
         const safeIGST = isInterState ? taxable * 0.03 : 0;
         const safeCGST = !isInterState ? taxable * 0.015 : 0;
         const safeSGST = !isInterState ? taxable * 0.015 : 0;
@@ -439,16 +434,14 @@ const Reports = () => {
         b2csMap[key].samt += safeSGST;
       }
 
-      // --- HSN MAPPING ---
       if (inv.newItems && Array.isArray(inv.newItems)) {
         inv.newItems.forEach((item) => {
           const hsnCode = item.hsn || item.hsnCode || "7113";
           const uqc = "GMS";
           const weight = Number(item.weight || 0);
-          const itemTaxable = Number(item.amount || 0); // Assuming amount is taxable
+          const itemTaxable = Number(item.amount || 0);
           const itemRate = 3.0;
 
-          // Re-calculate Item Tax
           const i_igst = inv.isIGSTEnabled ? itemTaxable * 0.03 : 0;
           const i_cgst = !inv.isIGSTEnabled ? itemTaxable * 0.015 : 0;
           const i_sgst = !inv.isIGSTEnabled ? itemTaxable * 0.015 : 0;
@@ -483,7 +476,6 @@ const Reports = () => {
       }
     });
 
-    // --- CONSTRUCT JSON ---
     const b2csArray = Object.values(b2csMap).map((item) => ({
       sply_ty: item.sply_ty,
       rt: item.rt,
