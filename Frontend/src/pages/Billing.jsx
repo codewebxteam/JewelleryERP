@@ -31,10 +31,10 @@ import {
   orderBy,
 } from "firebase/firestore";
 
-// --- Configuration ---
-const CGST_RATE = 0.09;
-const SGST_RATE = 0.09;
-const IGST_RATE = 0.18;
+// --- Configuration (UPDATED RATES) ---
+const CGST_RATE = 0.015; // 1.5%
+const SGST_RATE = 0.015; // 1.5%
+const IGST_RATE = 0.03; // 3%
 
 // --- Helpers ---
 const formatCurrency = (amount) =>
@@ -679,9 +679,9 @@ const Billing = () => {
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(10);
       pdf.setTextColor(...darkText);
-      pdf.text("Exclusive Gold & Diamond Jewellery", 45, 28);
-      pdf.text("123, Main Road, City Center - 400001", 45, 33);
-      pdf.text("Ph: 98765 43210 | GSTIN: 27ABCDE1234F1Z5", 45, 38);
+      pdf.text("Exclusive Gold & Silvers Jewellery", 45, 28);
+      pdf.text("Mandir Road, Mairwa, Siwan Bihar - 841239", 45, 33);
+      pdf.text("Ph: +91-8873873269 | GSTIN: 10AZXPK1966D2ZA", 45, 38);
       pdf.setDrawColor(220);
       pdf.line(10, 45, pageWidth - 10, 45);
 
@@ -837,14 +837,14 @@ const Billing = () => {
         pdf.setTextColor(0);
       }
 
-      pdf.text("CGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 2);
+      pdf.text("CGST (1.5%):", summaryStartX + 5, finalY + 5 + lineHeight * 2);
       pdf.text(
         formatCurrency(invoice.cgst),
         valueX,
         finalY + 5 + lineHeight * 2,
         { align: "right" }
       );
-      pdf.text("SGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 3);
+      pdf.text("SGST (1.5%):", summaryStartX + 5, finalY + 5 + lineHeight * 3);
       pdf.text(
         formatCurrency(invoice.sgst),
         valueX,
@@ -853,7 +853,7 @@ const Billing = () => {
       );
 
       if (invoice.igstAmount > 0) {
-        pdf.text("IGST (18%):", summaryStartX + 5, finalY + 5 + lineHeight * 4);
+        pdf.text("IGST (3%):", summaryStartX + 5, finalY + 5 + lineHeight * 4);
         pdf.text(
           formatCurrency(invoice.igstAmount),
           valueX,
@@ -1331,7 +1331,7 @@ const Billing = () => {
                       htmlFor="igst"
                       className="text-sm font-medium text-gray-700"
                     >
-                      Enable IGST (18%)
+                      Enable IGST (3%)
                     </label>
                   </div>
                 </div>
@@ -1615,16 +1615,16 @@ const Billing = () => {
                     />
                   </div>
                   <div className="flex justify-between items-center text-sm text-gray-500">
-                    <span>CGST (9%)</span>
+                    <span>CGST (1.5%)</span>
                     <span>{formatCurrency(cgst)}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm text-gray-500">
-                    <span>SGST (9%)</span>
+                    <span>SGST (1.5%)</span>
                     <span>{formatCurrency(sgst)}</span>
                   </div>
                   {isIGSTEnabled && (
                     <div className="flex justify-between items-center text-sm text-gray-500">
-                      <span>IGST (18%)</span>
+                      <span>IGST (3%)</span>
                       <span>{formatCurrency(igstAmount)}</span>
                     </div>
                   )}

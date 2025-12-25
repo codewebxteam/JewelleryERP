@@ -9,13 +9,13 @@ import {
   Filter,
   TrendingUp,
   AlertCircle,
-  Gem, // Icon for Gold/Silver
-  Coins, // Icon for Metal
-  Layers, // Icon for Other
+  Gem,
+  Coins,
+  Layers,
   ArrowLeft,
   ArrowRight,
 } from "lucide-react";
-import { db } from "../firebase";
+import { db } from "../firebase"; // Ensure path is correct
 import {
   collection,
   addDoc,
@@ -29,11 +29,11 @@ const Stock = () => {
   const [stockList, setStockList] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
 
-  // ✅ TWO SEPARATE FILTERS
-  const [filterStockType, setFilterStockType] = useState("All"); // All, White, Black
-  const [filterCategory, setFilterCategory] = useState("All"); // All, Gold, Silver, Other
+  // Filters
+  const [filterStockType, setFilterStockType] = useState("All");
+  const [filterCategory, setFilterCategory] = useState("All");
 
-  // ✅ PAGINATION STATE
+  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
@@ -41,13 +41,13 @@ const Stock = () => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [currentItem, setCurrentItem] = useState(null);
 
-  // Control custom name input
+  // Custom Name Toggle
   const [isCustomName, setIsCustomName] = useState(false);
 
   const [formData, setFormData] = useState({
     sku: "",
     name: "",
-    category: "", // Gold, Silver, Other
+    category: "",
     customName: "",
     hsnCode: "",
     huid: "",
@@ -55,18 +55,31 @@ const Stock = () => {
     stockType: "",
   });
 
-  const productNames = [
+  // ✅ BASE LISTS (Category Wise)
+  const baseGold = [
     "Gold Ring",
-    "Silver Ring",
     "Gold Chain",
+    "Gold Necklace",
     "Gold Bangles",
-    "Pendant",
     "Earrings",
+    "Pendant",
     "Nose Pin",
+    "Mangalsutra",
     "Bracelet",
-    "Coin",
-    "Other",
   ];
+
+  const baseSilver = [
+    "Silver Ring",
+    "Silver Chain",
+    "Payal",
+    "Bichhiya",
+    "Silver Coin",
+    "Silver Glass",
+    "Silver Idol",
+    "Bracelet",
+  ];
+
+  const baseOther = ["Gemstone", "Diamond Ring", "Repair Work", "Old Gold"];
 
   // Firestore Listener
   useEffect(() => {
@@ -81,7 +94,28 @@ const Stock = () => {
     return () => unsubscribe();
   }, []);
 
-  // --- STATS CALCULATION ---
+  // ✅ DYNAMIC PRODUCT LIST LOGIC (Category Dependent)
+  const availableProductNames = useMemo(() => {
+    const selectedCat = formData.category;
+
+    // 1. Decide Base List based on Category
+    let defaultList = [];
+    if (selectedCat === "Gold") defaultList = baseGold;
+    else if (selectedCat === "Silver") defaultList = baseSilver;
+    else if (selectedCat === "Other") defaultList = baseOther;
+    else return []; // If no category selected
+
+    // 2. Get existing names from DB that match this category
+    const dbNames = stockList
+      .filter((item) => item.category === selectedCat)
+      .map((item) => item.name);
+
+    // 3. Merge and Remove Duplicates
+    const uniqueNames = new Set([...defaultList, ...dbNames]);
+    return Array.from(uniqueNames).sort();
+  }, [formData.category, stockList]); // Runs whenever category changes
+
+  // --- STATS ---
   const stats = useMemo(() => {
     const totalItems = stockList.length;
     const totalWeight = stockList.reduce(
@@ -122,51 +156,61 @@ const Stock = () => {
     };
   }, [stockList]);
 
-  // --- FILTERING LOGIC ---
+  // --- FILTERING ---
   const filteredStock = useMemo(() => {
     return stockList.filter((item) => {
       const matchesSearch =
         item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.sku?.toLowerCase().includes(searchTerm.toLowerCase());
 
-      // 1. Check Stock Type (White/Black)
       let matchesStock = true;
       if (filterStockType === "White")
         matchesStock = item.stockType === "white";
       if (filterStockType === "Black")
         matchesStock = item.stockType === "black";
 
-      // 2. Check Category (Gold/Silver/Other)
       let matchesCategory = true;
-      if (filterCategory !== "All") {
+      if (filterCategory !== "All")
         matchesCategory = item.category === filterCategory;
-      }
 
       return matchesSearch && matchesStock && matchesCategory;
     });
   }, [stockList, searchTerm, filterStockType, filterCategory]);
 
-  // ✅ Reset Page when Filters Change
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, filterStockType, filterCategory]);
 
-  // ✅ PAGINATION CALCULATIONS
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = filteredStock.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(filteredStock.length / itemsPerPage);
 
-  // Modal Handlers
+  // ✅ SKU GENERATOR (Same as before)
+  const generateNextSKU = () => {
+    if (stockList.length === 0) return "SKU-001";
+    let maxNum = 0;
+    stockList.forEach((item) => {
+      const match = item.sku && item.sku.match(/(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNum) maxNum = num;
+      }
+    });
+    return `SKU-${String(maxNum + 1).padStart(3, "0")}`;
+  };
+
+  // Modal Functions
   const openModal = () => {
     setIsModalOpen(true);
     setIsEditMode(false);
     setIsCustomName(false);
     setCurrentItem(null);
+    const nextSku = generateNextSKU();
     setFormData({
-      sku: "",
+      sku: nextSku,
       name: "",
-      category: "",
+      category: "", // User has to select category first
       customName: "",
       hsnCode: "",
       huid: "",
@@ -178,14 +222,15 @@ const Stock = () => {
   const openEditModal = (item) => {
     setIsModalOpen(true);
     setIsEditMode(true);
-    const isCustom = !productNames.includes(item.name);
-    setIsCustomName(isCustom);
+    setIsCustomName(false);
     setCurrentItem(item);
+
+    // Pre-fill data so list logic works
     setFormData({
       sku: item.sku || "",
-      name: isCustom ? "Other" : item.name,
+      name: item.name,
       category: item.category || "",
-      customName: isCustom ? item.name : "",
+      customName: "",
       hsnCode: item.hsnCode || "",
       huid: item.huid || "",
       totalWeight: item.totalWeight || "",
@@ -202,6 +247,13 @@ const Stock = () => {
 
   const handleFormChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+
+    // If Category changes, reset product name because lists will change
+    if (e.target.name === "category") {
+      setFormData((prev) => ({ ...prev, category: e.target.value, name: "" }));
+      setIsCustomName(false);
+    }
+
     if (e.target.name === "name") {
       setIsCustomName(e.target.value === "Other");
     }
@@ -221,24 +273,23 @@ const Stock = () => {
     }
 
     if (!formData.category) {
-      alert("Please select a Jewellery Type (Gold/Silver/Other)");
+      alert("Please select a Jewellery Type");
       return;
     }
 
     const weightNum = Number(formData.totalWeight);
     if (isNaN(weightNum) || weightNum <= 0) {
-      alert("Weight must be a number greater than 0.");
+      alert("Weight error");
       return;
     }
 
-    const finalWeight = Number(weightNum.toFixed(2));
     const payload = {
       sku: formData.sku,
       name: finalName,
       category: formData.category,
       hsnCode: formData.hsnCode,
       huid: formData.huid,
-      totalWeight: finalWeight,
+      totalWeight: Number(weightNum.toFixed(2)),
       stockType: formData.stockType,
     };
 
@@ -266,7 +317,7 @@ const Stock = () => {
 
   return (
     <div className="space-y-6 p-4 sm:px-6 lg:px-8 pb-24 max-w-[1600px] mx-auto">
-      {/* --- HEADER SECTION --- */}
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">
@@ -288,9 +339,8 @@ const Stock = () => {
         </button>
       </div>
 
-      {/* --- MAIN STATS CARDS --- */}
+      {/* STATS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Total Weight */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between relative overflow-hidden">
           <div className="relative z-10">
             <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">
@@ -307,7 +357,6 @@ const Stock = () => {
           <div className="absolute -bottom-6 -right-6 w-24 h-24 bg-yellow-400/10 rounded-full blur-2xl"></div>
         </div>
 
-        {/* Stock Distribution */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
           <div>
             <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">
@@ -338,7 +387,6 @@ const Stock = () => {
           </div>
         </div>
 
-        {/* Total Items */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
           <div>
             <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">
@@ -354,9 +402,8 @@ const Stock = () => {
         </div>
       </div>
 
-      {/* --- CATEGORY CARDS (CLICK TO FILTER) --- */}
+      {/* CATEGORY CLICK FILTER */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* GOLD CARD */}
         <div
           onClick={() => setFilterCategory("Gold")}
           className={`cursor-pointer p-5 rounded-2xl border transition-all duration-200 transform hover:scale-[1.02] ${
@@ -385,8 +432,6 @@ const Stock = () => {
             </div>
           </div>
         </div>
-
-        {/* SILVER CARD */}
         <div
           onClick={() => setFilterCategory("Silver")}
           className={`cursor-pointer p-5 rounded-2xl border transition-all duration-200 transform hover:scale-[1.02] ${
@@ -415,8 +460,6 @@ const Stock = () => {
             </div>
           </div>
         </div>
-
-        {/* OTHER CARD */}
         <div
           onClick={() => setFilterCategory("Other")}
           className={`cursor-pointer p-5 rounded-2xl border transition-all duration-200 transform hover:scale-[1.02] ${
@@ -447,7 +490,7 @@ const Stock = () => {
         </div>
       </div>
 
-      {/* --- FILTERS & SEARCH --- */}
+      {/* SEARCH & FILTERS */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 justify-between items-center">
         <div className="relative w-full md:max-w-md">
           <input
@@ -461,10 +504,7 @@ const Stock = () => {
             className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
           />
         </div>
-
-        {/* TWO FILTER GROUPS */}
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto items-center">
-          {/* Filter Group 1: Stock Type */}
           <div className="flex bg-gray-100 p-1 rounded-lg">
             {["All", "White", "Black"].map((type) => (
               <button
@@ -480,10 +520,7 @@ const Stock = () => {
               </button>
             ))}
           </div>
-
           <div className="hidden sm:block h-6 w-px bg-gray-300"></div>
-
-          {/* Filter Group 2: Category */}
           <div className="flex bg-gray-100 p-1 rounded-lg">
             {["All", "Gold", "Silver", "Other"].map((cat) => (
               <button
@@ -502,7 +539,7 @@ const Stock = () => {
         </div>
       </div>
 
-      {/* --- TABLE --- */}
+      {/* TABLE */}
       <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -528,8 +565,6 @@ const Stock = () => {
                 </th>
               </tr>
             </thead>
-
-            {/* ✅ Using currentItems for Pagination */}
             <tbody className="divide-y divide-gray-100">
               {currentItems.map((item) => (
                 <tr
@@ -583,7 +618,6 @@ const Stock = () => {
                       {item.totalWeight} g
                     </span>
                   </td>
-
                   <td className="px-6 py-4 text-center">
                     <div className="flex justify-center gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
@@ -604,7 +638,6 @@ const Stock = () => {
                   </td>
                 </tr>
               ))}
-
               {filteredStock.length === 0 && (
                 <tr>
                   <td colSpan={6} className="py-12 text-center">
@@ -621,8 +654,6 @@ const Stock = () => {
             </tbody>
           </table>
         </div>
-
-        {/* ✅ PAGINATION CONTROLS */}
         {totalPages > 1 && (
           <div className="px-6 py-4 border-t border-gray-100 flex justify-between items-center bg-gray-50">
             <button
@@ -650,7 +681,6 @@ const Stock = () => {
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100">
-            {/* Modal Header */}
             <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
               <div>
                 <h3 className="text-lg font-bold text-gray-800">
@@ -668,7 +698,6 @@ const Stock = () => {
               </button>
             </div>
 
-            {/* Modal Form */}
             <form onSubmit={handleFormSubmit} className="p-6 space-y-5">
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-1">
@@ -679,13 +708,12 @@ const Stock = () => {
                     type="text"
                     name="sku"
                     required
-                    className="input-field font-mono"
-                    placeholder="e.g. RNG-001"
+                    className="input-field font-mono bg-gray-50"
+                    placeholder="e.g. SKU-001"
                     value={formData.sku}
                     onChange={handleFormChange}
                   />
                 </div>
-                {/* Category Dropdown */}
                 <div className="col-span-1">
                   <label className="label">
                     Jewellery Type <span className="text-red-500">*</span>
@@ -712,19 +740,25 @@ const Stock = () => {
                 <select
                   name="name"
                   required
-                  className="input-field mb-2"
+                  disabled={!formData.category}
+                  className="input-field mb-2 disabled:opacity-50 disabled:bg-gray-100"
                   value={formData.name}
                   onChange={handleFormChange}
                 >
-                  <option value="">Select Category</option>
-                  {productNames.map((name) => (
+                  <option value="">
+                    {formData.category
+                      ? "Select Product"
+                      : "Select Category First"}
+                  </option>
+                  {availableProductNames.map((name) => (
                     <option key={name}>{name}</option>
                   ))}
+                  <option value="Other">Other (Add New)</option>
                 </select>
                 {isCustomName && (
                   <input
                     type="text"
-                    placeholder="Enter Custom Name"
+                    placeholder="Enter Custom Name (e.g. Diamond Ring)"
                     name="customName"
                     className="input-field bg-yellow-50 border-yellow-200 focus:border-yellow-400"
                     value={formData.customName}
@@ -809,32 +843,10 @@ const Stock = () => {
         </div>
       )}
 
-      {/* --- STYLES --- */}
       <style>{`
-        .input-field {
-          width: 100%;
-          padding: 10px 14px;
-          border: 1px solid #e5e7eb;
-          border-radius: 10px;
-          outline: none;
-          transition: all 0.2s;
-          background: #fff;
-          font-size: 0.95rem;
-          color: #374151;
-        }
-        .input-field:focus {
-          border-color: #ca8a04;
-          box-shadow: 0 0 0 3px rgba(202, 138, 4, 0.1);
-        }
-        .label {
-          display: block;
-          font-size: 0.75rem;
-          font-weight: 700;
-          color: #6b7280;
-          text-transform: uppercase;
-          margin-bottom: 6px;
-          letter-spacing: 0.025em;
-        }
+        .input-field { width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 10px; outline: none; transition: all 0.2s; background: #fff; font-size: 0.95rem; color: #374151; }
+        .input-field:focus { border-color: #ca8a04; box-shadow: 0 0 0 3px rgba(202, 138, 4, 0.1); }
+        .label { display: block; font-size: 0.75rem; font-weight: 700; color: #6b7280; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.025em; }
       `}</style>
     </div>
   );
