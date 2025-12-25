@@ -7,7 +7,6 @@ import {
   Filter,
   Download,
   FileJson, // GST Icon
-  Gem,
 } from "lucide-react";
 import {
   PieChart,
@@ -223,7 +222,7 @@ const Reports = () => {
     dateTo: "",
     search: "",
     stockType: "all",
-    jewelleryType: "all", // New Filter
+    jewelleryType: "all",
   });
 
   const [showFilters, setShowFilters] = useState(true);
@@ -333,7 +332,7 @@ const Reports = () => {
     saveAs(blob, filename);
   };
 
-  // ✅ GST Export Logic
+  // ✅ GST Export Logic (UPDATED FOR OFFLINE TOOL COMPATIBILITY)
   const exportGSTJSON = () => {
     if (reportType !== "sales") {
       alert("GST Export is only available for Sales Reports.");
@@ -344,65 +343,127 @@ const Reports = () => {
       return;
     }
 
-    // 1. Basic Info
     const SHOP_GSTIN = "10AZXPK1966D2ZA";
-    const SHOP_STATE_CODE = "10";
 
+    // 1. FP (Financial Period) Format: MMYYYY
     const currentMonth = filters.month
       ? filters.month.split("-")
       : new Date().toISOString().slice(0, 7).split("-");
-    const fp = `${currentMonth[1]}${currentMonth[0]}`;
+    const fp = `${currentMonth[1]}${currentMonth[0]}`; // e.g. 122025
 
-    // 2. Aggregate Data for B2CS
+    // --- DATA CONTAINERS ---
     const b2csMap = {};
+    const hsnMap = {};
+    let minInv = null;
+    let maxInv = null;
+    let totalInvCount = 0;
+    let cancelledCount = 0; // Assuming currently no cancelled logic, set 0
 
+    // --- ITERATE DATA ---
     reportData.forEach((inv) => {
+      // 1. Document Summary Logic
+      const invNo = inv.invoiceNo || "";
+      if (invNo) {
+        totalInvCount++;
+        // Simple string comparison for min/max
+        if (!minInv || invNo < minInv) minInv = invNo;
+        if (!maxInv || invNo > maxInv) maxInv = invNo;
+      }
+
+      // 2. B2CS Aggregation
       const taxable = Number(inv.taxableAmount || 0);
-      if (taxable <= 0) return;
-
-      const isInterState = Number(inv.igstAmount || 0) > 0;
-      const pos = isInterState ? "99" : SHOP_STATE_CODE;
-
-      const totalTax =
-        (Number(inv.cgst) || 0) +
-        (Number(inv.sgst) || 0) +
-        (Number(inv.igstAmount) || 0);
-      let rate = 3.0;
-
       if (taxable > 0) {
-        const calculatedRate = (totalTax / taxable) * 100;
-        const rounded = Math.round(calculatedRate);
-        if ([0, 0.25, 3, 5, 12, 18, 28].includes(rounded)) {
-          rate = rounded;
-        } else {
-          if (Math.abs(calculatedRate - 3) < 0.5) rate = 3.0;
-          else if (Math.abs(calculatedRate - 18) < 0.5) rate = 18.0;
-          else if (Math.abs(calculatedRate - 5) < 0.5) rate = 5.0;
+        const isInterState = Number(inv.igstAmount || 0) > 0;
+        const pos = isInterState ? "99" : "10"; // 10 is Bihar Code
+        const sply_ty = isInterState ? "INTER" : "INTRA";
+
+        const totalTax =
+          (Number(inv.cgst) || 0) +
+          (Number(inv.sgst) || 0) +
+          (Number(inv.igstAmount) || 0);
+        let rate = 3.0; // Default Gold Rate
+
+        // Auto-detect rate
+        const calcRate = (totalTax / taxable) * 100;
+        const standardRates = [0, 0.25, 3, 5, 12, 18, 28];
+        const closestRate = standardRates.reduce((prev, curr) =>
+          Math.abs(curr - calcRate) < Math.abs(prev - calcRate) ? curr : prev
+        );
+        rate = closestRate;
+
+        const key = `${pos}-${rate}`;
+
+        if (!b2csMap[key]) {
+          b2csMap[key] = {
+            sply_ty: sply_ty,
+            typ: "OE", // OE = Other than E-commerce
+            pos: pos,
+            rt: rate,
+            txval: 0,
+            iamt: 0,
+            camt: 0,
+            samt: 0,
+            csamt: 0,
+          };
         }
+        b2csMap[key].txval += taxable;
+        b2csMap[key].iamt += Number(inv.igstAmount || 0);
+        b2csMap[key].camt += Number(inv.cgst || 0);
+        b2csMap[key].samt += Number(inv.sgst || 0);
       }
 
-      const key = `${pos}-${rate}`;
+      // 3. HSN Summary Aggregation (CRITICAL FOR NEW TOOL)
+      if (inv.newItems && Array.isArray(inv.newItems)) {
+        inv.newItems.forEach((item) => {
+          const hsnCode = item.hsn || item.hsnCode || "7113"; // Default HSN
+          const uqc = "GMS"; // Grams
+          const weight = Number(item.weight || 0);
+          const itemTaxable = Number(item.amount || 0);
 
-      if (!b2csMap[key]) {
-        b2csMap[key] = {
-          sply_ty: isInterState ? "INTER" : "INTRA",
-          rt: rate,
-          typ: "OE",
-          pos: pos,
-          txval: 0,
-          camt: 0,
-          samt: 0,
-          iamt: 0,
-          csamt: 0,
-        };
+          // Simplified Pro-rata tax based on rate derived above (defaulting to 3%)
+          const itemRate = 3.0;
+          const itemIgst = inv.isIGSTEnabled
+            ? itemTaxable * (itemRate / 100)
+            : 0;
+          const itemCgst = !inv.isIGSTEnabled
+            ? itemTaxable * (itemRate / 200)
+            : 0;
+          const itemSgst = !inv.isIGSTEnabled
+            ? itemTaxable * (itemRate / 200)
+            : 0;
+
+          const hsnKey = `${hsnCode}-${itemRate}`;
+
+          if (!hsnMap[hsnKey]) {
+            hsnMap[hsnKey] = {
+              num: 0,
+              hsn_sc: hsnCode,
+              desc: "Jewellery",
+              uqc: uqc,
+              qty: 0,
+              val: 0,
+              txval: 0,
+              iamt: 0,
+              camt: 0,
+              samt: 0,
+              csamt: 0,
+              rt: itemRate,
+            };
+          }
+
+          hsnMap[hsnKey].qty += weight;
+          hsnMap[hsnKey].txval += itemTaxable;
+          hsnMap[hsnKey].val += itemTaxable + itemIgst + itemCgst + itemSgst;
+          hsnMap[hsnKey].iamt += itemIgst;
+          hsnMap[hsnKey].camt += itemCgst;
+          hsnMap[hsnKey].samt += itemSgst;
+        });
       }
-
-      b2csMap[key].txval += taxable;
-      b2csMap[key].camt += Number(inv.cgst || 0);
-      b2csMap[key].samt += Number(inv.sgst || 0);
-      b2csMap[key].iamt += Number(inv.igstAmount || 0);
     });
 
+    // --- FORMAT DATA FOR JSON ---
+
+    // 1. Format B2CS
     const b2csArray = Object.values(b2csMap).map((item) => ({
       sply_ty: item.sply_ty,
       rt: item.rt,
@@ -415,18 +476,60 @@ const Reports = () => {
       csamt: 0,
     }));
 
+    // 2. Format HSN
+    const hsnArray = Object.values(hsnMap).map((item, index) => ({
+      num: index + 1,
+      hsn_sc: item.hsn_sc,
+      desc: item.desc,
+      uqc: item.uqc,
+      qty: Number(item.qty.toFixed(2)),
+      val: Number(item.val.toFixed(2)),
+      txval: Number(item.txval.toFixed(2)),
+      iamt: Number(item.iamt.toFixed(2)),
+      camt: Number(item.camt.toFixed(2)),
+      samt: Number(item.samt.toFixed(2)),
+      csamt: 0,
+      rt: item.rt,
+    }));
+
+    // 3. Format Docs Issue
+    const docIssue = {
+      doc_det: [
+        {
+          doc_num: 1,
+          doc_typ: "Invoices for outward supply",
+          docs: [
+            {
+              num: 1,
+              from: minInv || "",
+              to: maxInv || "",
+              totnum: totalInvCount,
+              cancel: cancelledCount,
+              net_issue: totalInvCount - cancelledCount,
+            },
+          ],
+        },
+      ],
+    };
+
+    // --- FINAL PAYLOAD ---
     const gstPayload = {
       gstin: SHOP_GSTIN,
       fp: fp,
       version: "GST4.0",
       hash: "hash",
+      gt: 0,
+      cur_gt: 0,
       b2cs: b2csArray,
       b2b: [],
       cdnr: [],
       b2ba: [],
       cdnra: [],
       exp: [],
-      hsn: { data: [] },
+      hsn: {
+        data: hsnArray,
+      },
+      doc_issue: docIssue,
     };
 
     const filename = `GSTR1_${SHOP_GSTIN}_${fp}.json`;
