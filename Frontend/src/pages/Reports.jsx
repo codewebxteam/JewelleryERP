@@ -345,8 +345,8 @@ const Reports = () => {
     }
 
     // 1. Basic Info
-    const SHOP_GSTIN = "09AAAAA0000A1Z5";
-    const SHOP_STATE_CODE = "09";
+    const SHOP_GSTIN = "10AZXPK1966D2ZA";
+    const SHOP_STATE_CODE = "10";
 
     const currentMonth = filters.month
       ? filters.month.split("-")
