@@ -167,38 +167,67 @@ const applyFilters = (data, type, filters) => {
   return filtered;
 };
 
-// Export mapping (simple columns, per report type)
+// ✅ UPDATED: Export mapping with ALL Data Fields
 const mapExportData = (data, type) => {
   if (type === "sales") {
-    return data.map((i) => ({
-      InvoiceNo: i.invoiceNo || "",
-      Customer: i.customer?.name || "",
-      Date: i.date || "",
-      GrandTotal: i.grandTotal || 0,
-      Received: i.receivedAmount || 0,
-      BalanceDue: i.balanceDue || 0,
-      PaymentMode: i.paymentMode || "",
-    }));
+    return data.map((i) => {
+      // Create a summary of items
+      const itemSummary = (i.newItems || [])
+        .map((item) => `${item.name} (${item.weight}g)`)
+        .join(", ");
+
+      const totalWt = (i.newItems || []).reduce(
+        (acc, item) => acc + Number(item.weight || 0),
+        0
+      );
+
+      return {
+        "Invoice No": i.invoiceNo || "",
+        Date: i.date || "",
+        Time: i.time || "",
+        "Customer Name": i.customer?.name || "",
+        Mobile: i.customer?.contact || "",
+        Address: i.customer?.address || "",
+        "Stock Type": i.stockType || "white",
+        "Items List": itemSummary,
+        "Total Weight (g)": totalWt.toFixed(2),
+        "Sub Total": i.subTotal || 0,
+        Discount: i.discount || 0,
+        "Taxable Amount (Without Tax)": i.taxableAmount || 0, // ✅ Requested
+        CGST: i.cgst || 0,
+        SGST: i.sgst || 0,
+        IGST: i.igstAmount || 0,
+        "Grand Total": i.grandTotal || 0,
+        "Received Amount": i.receivedAmount || 0,
+        "Balance Due": i.balanceDue || 0,
+        "Payment Mode": i.paymentMode || "",
+        "UTR/Ref": i.utr || "",
+      };
+    });
   }
 
   if (type === "stock") {
     return data.map((i) => ({
-      SKU: i.sku || "",
-      Name: i.name || "",
+      "SKU ID": i.sku || "",
+      "Product Name": i.name || "",
       Category: i.category || "",
-      HSN: i.hsnCode || "",
       HUID: i.huid || "",
-      TotalWeight: i.totalWeight || 0,
+      "HSN Code": i.hsnCode || "",
+      "Stock Type": i.stockType || "",
+      "Net Weight (g)": i.totalWeight || 0,
     }));
   }
 
   // girwi
   return data.map((i) => ({
-    GirviNumber: i.girviNumber || "",
-    Customer: i.customerName || i.customer?.name || i.name || "",
-    Item: i.itemDescription || "",
-    Weight: i.weight || 0,
-    StartDate: i.startDate || "",
+    "Girvi No": i.girviNumber || "",
+    "Customer Name": i.customerName || i.customer?.name || i.name || "",
+    Mobile: i.phone || i.mobile || "",
+    "Item Description": i.itemDescription || "",
+    "Weight (g)": i.weight || 0,
+    "Loan Amount": i.loanAmount || i.amount || 0,
+    "Interest Rate": i.interestRate || 0,
+    "Start Date": i.startDate || "",
     Status: i.status || "",
   }));
 };
@@ -332,7 +361,7 @@ const Reports = () => {
     saveAs(blob, filename);
   };
 
-  // ✅ GST Export Logic (UPDATED FOR OFFLINE TOOL COMPATIBILITY)
+  // ✅ GST Export Logic (Fixed for Offline Tool)
   const exportGSTJSON = () => {
     if (reportType !== "sales") {
       alert("GST Export is only available for Sales Reports.");
@@ -357,7 +386,7 @@ const Reports = () => {
     let minInv = null;
     let maxInv = null;
     let totalInvCount = 0;
-    let cancelledCount = 0; // Assuming currently no cancelled logic, set 0
+    let cancelledCount = 0;
 
     // --- ITERATE DATA ---
     reportData.forEach((inv) => {
@@ -412,15 +441,14 @@ const Reports = () => {
         b2csMap[key].samt += Number(inv.sgst || 0);
       }
 
-      // 3. HSN Summary Aggregation (CRITICAL FOR NEW TOOL)
+      // 3. HSN Summary Aggregation
       if (inv.newItems && Array.isArray(inv.newItems)) {
         inv.newItems.forEach((item) => {
-          const hsnCode = item.hsn || item.hsnCode || "7113"; // Default HSN
+          const hsnCode = item.hsn || item.hsnCode || "7113";
           const uqc = "GMS"; // Grams
           const weight = Number(item.weight || 0);
           const itemTaxable = Number(item.amount || 0);
 
-          // Simplified Pro-rata tax based on rate derived above (defaulting to 3%)
           const itemRate = 3.0;
           const itemIgst = inv.isIGSTEnabled
             ? itemTaxable * (itemRate / 100)
