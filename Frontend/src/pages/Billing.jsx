@@ -192,9 +192,9 @@ const Billing = () => {
   // --- New Item Input State ---
   const [itemCategory, setItemCategory] = useState("");
   const [itemName, setItemName] = useState("");
-  // ✅ UPDATE: Default HSN removed (Empty string)
+
   const [itemHsn, setItemHsn] = useState("");
-  const [itemHuc, setItemHuc] = useState("");
+  const [itemHuid, setItemHuid] = useState(""); // Changed HUC to HUID
   const [itemWeight, setItemWeight] = useState("");
   const [itemRate, setItemRate] = useState("");
   const [itemMaking, setItemMaking] = useState("");
@@ -304,20 +304,23 @@ const Billing = () => {
         (s) =>
           s.name === itemName &&
           (s.hsnCode || s.hsn || "") === (itemHsn || "") &&
-          (s.huid || s.huc || "") === (itemHuc || "")
+          (s.huid || "") === (itemHuid || "")
       ),
-    [stockInventory, itemName, itemHsn, itemHuc]
+    [stockInventory, itemName, itemHsn, itemHuid]
   );
 
   const handleAddNewItem = (e) => {
     e.preventDefault();
-    if (!itemName || !itemWeight || !itemRate || !itemMaking) {
-      alert("Please fill all product fields.");
+    // ✅ VALIDATION: Removed itemMaking check. Now Making & HUID are optional.
+    if (!itemName || !itemWeight || !itemRate) {
+      alert("Item Name, Weight and Rate are required.");
       return;
     }
     const weight = Number(itemWeight);
     const rate = Number(itemRate);
-    const making = Number(itemMaking);
+
+    // ✅ DEFAULT TO 0 if empty
+    const making = Number(itemMaking) || 0;
 
     if (selectedStockItem) {
       const currentStock = Number(
@@ -343,18 +346,20 @@ const Billing = () => {
       rate,
       makingCharge: making,
       hsn: itemHsn,
-      huc: itemHuc,
+      huid: itemHuid, // Saving as HUID
       amount,
       stockType: itemStockType || selectedStockItem?.stockType || "white",
       category: itemCategory || selectedStockItem?.category || "Other",
     };
 
     setNewItems((prev) => [...prev, newItem]);
+
+    // Reset Fields
     setItemName("");
     setProductQuery("");
     setItemCategory("");
-    setItemHsn(""); // Reset HSN to empty
-    setItemHuc("");
+    setItemHsn("");
+    setItemHuid(""); // Reset HUID
     setItemWeight("");
     setItemRate("");
     setItemMaking("");
@@ -399,7 +404,7 @@ const Billing = () => {
         (s) =>
           s.name === sold.name &&
           (s.hsnCode || s.hsn || "") === (sold.hsn || "") &&
-          (s.huid || s.huc || "") === (sold.huc || "") &&
+          (s.huid || "") === (sold.huid || "") &&
           (s.stockType || "white") === (sold.stockType || "white")
       );
 
@@ -408,7 +413,7 @@ const Billing = () => {
           (s) =>
             s.name === sold.name &&
             (s.hsnCode || s.hsn || "") === (sold.hsn || "") &&
-            (s.huid || s.huc || "") === (sold.huc || "")
+            (s.huid || "") === (sold.huid || "")
         );
       }
 
@@ -550,7 +555,7 @@ const Billing = () => {
     setItemName("");
     setItemCategory("");
     setItemHsn("");
-    setItemHuc("");
+    setItemHuid("");
     setItemWeight("");
     setItemRate("");
     setItemMaking("");
@@ -715,6 +720,8 @@ const Billing = () => {
       });
 
       yPos += invoice.utr ? 32 : 28;
+
+      // ✅ TABLE HEADER CHANGED TO HUID
       autoTable(pdf, {
         startY: yPos,
         head: [
@@ -722,7 +729,7 @@ const Billing = () => {
             "Sno.",
             "Item Description",
             "HSN",
-            "HUC",
+            "HUID", // Updated
             "Wt(g)",
             "Rate",
             "Making",
@@ -733,7 +740,7 @@ const Billing = () => {
           i + 1,
           item.name,
           item.hsn,
-          item.huc,
+          item.huid, // Updated
           item.weight.toFixed(2),
           item.rate,
           item.makingCharge,
@@ -1397,7 +1404,7 @@ const Billing = () => {
                               setItemName(s.name);
                               setProductQuery(s.name);
                               setItemHsn(s.hsnCode || itemHsn);
-                              setItemHuc(s.huid || "");
+                              setItemHuid(s.huid || ""); // Set HUID
                               setItemStockType(s.stockType || "white");
                               // ✅ Auto-set category if not already set
                               if (!itemCategory)
@@ -1425,12 +1432,12 @@ const Billing = () => {
                   </div>
                   {/* ✅ Reduced HUC Input Size to 1 Column */}
                   <div className="col-span-1 md:col-span-1">
-                    <label className="label">HUC</label>
+                    <label className="label">HUID</label> {/* Label Changed */}
                     <input
                       type="text"
                       className="input-field"
-                      value={itemHuc}
-                      onChange={(e) => setItemHuc(e.target.value)}
+                      value={itemHuid} // Value Updated
+                      onChange={(e) => setItemHuid(e.target.value)} // Updated
                     />
                   </div>
                   <div className="col-span-1 md:col-span-1">
