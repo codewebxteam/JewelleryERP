@@ -31,10 +31,10 @@ import {
   orderBy,
 } from "firebase/firestore";
 
-// --- Configuration ---
-const CGST_RATE = 0.09;
-const SGST_RATE = 0.09;
-const IGST_RATE = 0.18;
+// --- Configuration (UPDATED RATES) ---
+const CGST_RATE = 0.015; // 1.5%
+const SGST_RATE = 0.015; // 1.5%
+const IGST_RATE = 0.03; // 3%
 
 // --- Helpers ---
 const formatCurrency = (amount) =>
@@ -144,6 +144,9 @@ const Billing = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [loadingInvoiceId, setLoadingInvoiceId] = useState(null);
 
+  // Filter State (All, Paid, Due)
+  const [filterStatus, setFilterStatus] = useState("All");
+
   // Manual date & time for invoice
   const [invoiceDate, setInvoiceDate] = useState("");
   const [invoiceTime, setInvoiceTime] = useState("");
@@ -183,13 +186,15 @@ const Billing = () => {
   const [discount, setDiscount] = useState("");
   const [receivedAmount, setReceivedAmount] = useState("");
 
-  // ✅ NEW: IGST Toggle
+  // IGST Toggle
   const [isIGSTEnabled, setIsIGSTEnabled] = useState(false);
 
   // --- New Item Input State ---
+  const [itemCategory, setItemCategory] = useState("");
   const [itemName, setItemName] = useState("");
-  const [itemHsn, setItemHsn] = useState("7113");
-  const [itemHuc, setItemHuc] = useState("");
+
+  const [itemHsn, setItemHsn] = useState("");
+  const [itemHuid, setItemHuid] = useState(""); // Changed HUC to HUID
   const [itemWeight, setItemWeight] = useState("");
   const [itemRate, setItemRate] = useState("");
   const [itemMaking, setItemMaking] = useState("");
@@ -219,27 +224,42 @@ const Billing = () => {
     return () => document.removeEventListener("click", handleOutside);
   }, []);
 
+  // Updated Suggestion Logic
   useEffect(() => {
-    if (!productQuery) {
-      setSuggestions([]);
-      return;
+    let filtered = stockInventory;
+
+    // 1. Filter by Category (if selected)
+    if (itemCategory && itemCategory !== "All") {
+      filtered = filtered.filter((item) => item.category === itemCategory);
     }
-    const q = productQuery.toLowerCase();
-    const filtered = stockInventory
-      .filter(
+
+    // 2. Filter by Search Query (if typed)
+    if (productQuery) {
+      const q = productQuery.toLowerCase();
+      filtered = filtered.filter(
         (item) =>
           item.name?.toLowerCase().includes(q) ||
           item.sku?.toLowerCase().includes(q)
-      )
+      );
+    } else if (!itemCategory || itemCategory === "All") {
+      // If NO category selected and NO query typed -> Show nothing
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    // Sort and limit
+    filtered = filtered
       .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 6);
+      .slice(0, 8);
+
     setSuggestions(filtered);
-    setShowSuggestions(true);
-  }, [productQuery, stockInventory]);
+    setShowSuggestions(filtered.length > 0);
+  }, [productQuery, itemCategory, stockInventory]);
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm]);
+  }, [searchTerm, filterStatus]);
 
   // --- Financial Calculations ---
   const newItemsTotal = useMemo(
@@ -284,20 +304,23 @@ const Billing = () => {
         (s) =>
           s.name === itemName &&
           (s.hsnCode || s.hsn || "") === (itemHsn || "") &&
-          (s.huid || s.huc || "") === (itemHuc || "")
+          (s.huid || "") === (itemHuid || "")
       ),
-    [stockInventory, itemName, itemHsn, itemHuc]
+    [stockInventory, itemName, itemHsn, itemHuid]
   );
 
   const handleAddNewItem = (e) => {
     e.preventDefault();
-    if (!itemName || !itemWeight || !itemRate || !itemMaking) {
-      alert("Please fill all product fields.");
+    // ✅ VALIDATION: Removed itemMaking check. Now Making & HUID are optional.
+    if (!itemName || !itemWeight || !itemRate) {
+      alert("Item Name, Weight and Rate are required.");
       return;
     }
     const weight = Number(itemWeight);
     const rate = Number(itemRate);
-    const making = Number(itemMaking);
+
+    // ✅ DEFAULT TO 0 if empty
+    const making = Number(itemMaking) || 0;
 
     if (selectedStockItem) {
       const currentStock = Number(
@@ -323,16 +346,20 @@ const Billing = () => {
       rate,
       makingCharge: making,
       hsn: itemHsn,
-      huc: itemHuc,
+      huid: itemHuid, // Saving as HUID
       amount,
       stockType: itemStockType || selectedStockItem?.stockType || "white",
+      category: itemCategory || selectedStockItem?.category || "Other",
     };
 
     setNewItems((prev) => [...prev, newItem]);
+
+    // Reset Fields
     setItemName("");
     setProductQuery("");
-    setItemHsn("7113");
-    setItemHuc("");
+    setItemCategory("");
+    setItemHsn("");
+    setItemHuid(""); // Reset HUID
     setItemWeight("");
     setItemRate("");
     setItemMaking("");
@@ -377,7 +404,7 @@ const Billing = () => {
         (s) =>
           s.name === sold.name &&
           (s.hsnCode || s.hsn || "") === (sold.hsn || "") &&
-          (s.huid || s.huc || "") === (sold.huc || "") &&
+          (s.huid || "") === (sold.huid || "") &&
           (s.stockType || "white") === (sold.stockType || "white")
       );
 
@@ -386,7 +413,7 @@ const Billing = () => {
           (s) =>
             s.name === sold.name &&
             (s.hsnCode || s.hsn || "") === (sold.hsn || "") &&
-            (s.huid || s.huc || "") === (sold.huc || "")
+            (s.huid || "") === (sold.huid || "")
         );
       }
 
@@ -433,7 +460,7 @@ const Billing = () => {
       return;
     }
 
-    // ✅ Generate Invoice No: SLJ/2025-26/0001
+    // Generate Invoice No
     const invoiceDateObj = new Date(invoiceDate);
     const year = invoiceDateObj.getFullYear();
     const month = invoiceDateObj.getMonth() + 1;
@@ -526,8 +553,9 @@ const Billing = () => {
     setUtr("");
     setIsIGSTEnabled(false);
     setItemName("");
-    setItemHsn("7113");
-    setItemHuc("");
+    setItemCategory("");
+    setItemHsn("");
+    setItemHuid("");
     setItemWeight("");
     setItemRate("");
     setItemMaking("");
@@ -656,9 +684,9 @@ const Billing = () => {
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(10);
       pdf.setTextColor(...darkText);
-      pdf.text("Exclusive Gold & Diamond Jewellery", 45, 28);
-      pdf.text("123, Main Road, City Center - 400001", 45, 33);
-      pdf.text("Ph: 98765 43210 | GSTIN: 27ABCDE1234F1Z5", 45, 38);
+      pdf.text("Exclusive Gold & Silvers Jewellery", 45, 28);
+      pdf.text("Mandir Road, Mairwa, Siwan Bihar - 841239", 45, 33);
+      pdf.text("Ph: +91-8873873269 | GSTIN: 10AZXPK1966D2ZA", 45, 38);
       pdf.setDrawColor(220);
       pdf.line(10, 45, pageWidth - 10, 45);
 
@@ -692,6 +720,8 @@ const Billing = () => {
       });
 
       yPos += invoice.utr ? 32 : 28;
+
+      // ✅ TABLE HEADER CHANGED TO HUID
       autoTable(pdf, {
         startY: yPos,
         head: [
@@ -699,7 +729,7 @@ const Billing = () => {
             "Sno.",
             "Item Description",
             "HSN",
-            "HUC",
+            "HUID", // Updated
             "Wt(g)",
             "Rate",
             "Making",
@@ -710,7 +740,7 @@ const Billing = () => {
           i + 1,
           item.name,
           item.hsn,
-          item.huc,
+          item.huid, // Updated
           item.weight.toFixed(2),
           item.rate,
           item.makingCharge,
@@ -814,14 +844,14 @@ const Billing = () => {
         pdf.setTextColor(0);
       }
 
-      pdf.text("CGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 2);
+      pdf.text("CGST (1.5%):", summaryStartX + 5, finalY + 5 + lineHeight * 2);
       pdf.text(
         formatCurrency(invoice.cgst),
         valueX,
         finalY + 5 + lineHeight * 2,
         { align: "right" }
       );
-      pdf.text("SGST (9%):", summaryStartX + 5, finalY + 5 + lineHeight * 3);
+      pdf.text("SGST (1.5%):", summaryStartX + 5, finalY + 5 + lineHeight * 3);
       pdf.text(
         formatCurrency(invoice.sgst),
         valueX,
@@ -830,7 +860,7 @@ const Billing = () => {
       );
 
       if (invoice.igstAmount > 0) {
-        pdf.text("IGST (18%):", summaryStartX + 5, finalY + 5 + lineHeight * 4);
+        pdf.text("IGST (3%):", summaryStartX + 5, finalY + 5 + lineHeight * 4);
         pdf.text(
           formatCurrency(invoice.igstAmount),
           valueX,
@@ -967,9 +997,16 @@ const Billing = () => {
     return invoices.filter((inv) => {
       const name = inv.customer?.name?.toLowerCase() || "";
       const id = (inv.invoiceNo || inv.id || "").toLowerCase();
-      return name.includes(term) || id.includes(term);
+      const matchesSearch = name.includes(term) || id.includes(term);
+
+      // ✅ Filter Logic (Added as requested)
+      let matchesStatus = true;
+      if (filterStatus === "Paid") matchesStatus = Number(inv.balanceDue) <= 0;
+      if (filterStatus === "Due") matchesStatus = Number(inv.balanceDue) > 0;
+
+      return matchesSearch && matchesStatus;
     });
-  }, [invoices, searchTerm]);
+  }, [invoices, searchTerm, filterStatus]);
 
   const totalPages = Math.max(
     1,
@@ -1013,7 +1050,11 @@ const Billing = () => {
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-rose-50 to-red-50 p-5 rounded-2xl border border-red-100 shadow-sm flex items-center justify-between">
+        {/* ✅ Made Pending Amount Card Clickable */}
+        <div
+          onClick={() => setFilterStatus("Due")}
+          className="bg-gradient-to-br from-rose-50 to-red-50 p-5 rounded-2xl border border-red-100 shadow-sm flex items-center justify-between cursor-pointer hover:scale-105 transition-transform"
+        >
           <div>
             <p className="text-red-600 font-bold text-xs uppercase tracking-wider mb-1">
               Pending Amount
@@ -1043,6 +1084,24 @@ const Billing = () => {
             size={20}
           />
         </div>
+
+        {/* ✅ New Filter Buttons */}
+        <div className="flex bg-gray-100 p-1 rounded-xl">
+          {["All", "Paid", "Due"].map((status) => (
+            <button
+              key={status}
+              onClick={() => setFilterStatus(status)}
+              className={`px-4 py-2 text-sm font-bold rounded-lg transition ${
+                filterStatus === status
+                  ? "bg-white text-gray-800 shadow text-yellow-600"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {status}
+            </button>
+          ))}
+        </div>
+
         <button
           onClick={() => setIsModalOpen(true)}
           className="w-full md:w-auto px-6 py-3 bg-gradient-to-r from-yellow-600 to-yellow-700 text-white font-bold rounded-xl shadow hover:shadow-lg transition flex items-center justify-center gap-2 transform active:scale-95"
@@ -1179,7 +1238,8 @@ const Billing = () => {
       {/* 🔹 CREATE INVOICE MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden">
+          {/* ✅ Reduced Max Width to 5xl for better fit on small laptops */}
+          <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
               <h3 className="text-xl font-bold text-gray-800">
                 Create New Invoice
@@ -1278,7 +1338,7 @@ const Billing = () => {
                       htmlFor="igst"
                       className="text-sm font-medium text-gray-700"
                     >
-                      Enable IGST (18%)
+                      Enable IGST (3%)
                     </label>
                   </div>
                 </div>
@@ -1293,6 +1353,25 @@ const Billing = () => {
                   onSubmit={handleAddNewItem}
                   className="grid grid-cols-2 md:grid-cols-12 gap-4 items-end"
                 >
+                  {/* ✅ Category Dropdown */}
+                  <div className="col-span-2 md:col-span-2">
+                    <label className="label">Category</label>
+                    <select
+                      className="input-field"
+                      value={itemCategory}
+                      onChange={(e) => {
+                        setItemCategory(e.target.value);
+                        setProductQuery(""); // Reset search on category change
+                      }}
+                    >
+                      <option value="">All</option>
+                      <option value="Gold">Gold</option>
+                      <option value="Silver">Silver</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  {/* ✅ Increased column span for Item Name (Balanced Layout) */}
                   <div
                     className="col-span-2 md:col-span-3 relative"
                     ref={suggestionsRef}
@@ -1308,7 +1387,11 @@ const Billing = () => {
                         setItemName(e.target.value);
                       }}
                       onFocus={() => {
-                        if (productQuery) setShowSuggestions(true);
+                        if (
+                          productQuery ||
+                          (itemCategory && itemCategory !== "All")
+                        )
+                          setShowSuggestions(true);
                       }}
                     />
                     {showSuggestions && suggestions.length > 0 && (
@@ -1321,8 +1404,11 @@ const Billing = () => {
                               setItemName(s.name);
                               setProductQuery(s.name);
                               setItemHsn(s.hsnCode || itemHsn);
-                              setItemHuc(s.huid || "");
+                              setItemHuid(s.huid || ""); // Set HUID
                               setItemStockType(s.stockType || "white");
+                              // ✅ Auto-set category if not already set
+                              if (!itemCategory)
+                                setItemCategory(s.category || "Other");
                               setShowSuggestions(false);
                             }}
                           >
@@ -1344,13 +1430,14 @@ const Billing = () => {
                       onChange={(e) => setItemHsn(e.target.value)}
                     />
                   </div>
-                  <div className="col-span-1 md:col-span-2">
-                    <label className="label">HUC</label>
+                  {/* ✅ Reduced HUC Input Size to 1 Column */}
+                  <div className="col-span-1 md:col-span-1">
+                    <label className="label">HUID</label> {/* Label Changed */}
                     <input
                       type="text"
                       className="input-field"
-                      value={itemHuc}
-                      onChange={(e) => setItemHuc(e.target.value)}
+                      value={itemHuid} // Value Updated
+                      onChange={(e) => setItemHuid(e.target.value)} // Updated
                     />
                   </div>
                   <div className="col-span-1 md:col-span-1">
@@ -1380,8 +1467,8 @@ const Billing = () => {
                       onChange={(e) => setItemMaking(e.target.value)}
                     />
                   </div>
-                  <div className="col-span-2 md:col-span-2">
-                    <label className="label">Stock Type</label>
+                  <div className="col-span-2 md:col-span-1">
+                    <label className="label">Type</label>
                     <select
                       className="input-field"
                       value={itemStockType}
@@ -1535,16 +1622,16 @@ const Billing = () => {
                     />
                   </div>
                   <div className="flex justify-between items-center text-sm text-gray-500">
-                    <span>CGST (9%)</span>
+                    <span>CGST (1.5%)</span>
                     <span>{formatCurrency(cgst)}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm text-gray-500">
-                    <span>SGST (9%)</span>
+                    <span>SGST (1.5%)</span>
                     <span>{formatCurrency(sgst)}</span>
                   </div>
                   {isIGSTEnabled && (
                     <div className="flex justify-between items-center text-sm text-gray-500">
-                      <span>IGST (18%)</span>
+                      <span>IGST (3%)</span>
                       <span>{formatCurrency(igstAmount)}</span>
                     </div>
                   )}
