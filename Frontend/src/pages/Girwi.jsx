@@ -65,6 +65,7 @@ const calculateMonthlyInterest = (
   let accruedInterest = 0;
   let totalPrincipalPaid = 0;
   let totalInterestPaid = 0;
+  let totalLoanAmount = Number(principal); // Track total money given (Initial + Additions)
 
   // Sort payments chronologically
   const sortedPayments = [...payments].sort(
@@ -107,20 +108,31 @@ const calculateMonthlyInterest = (
       payDate.setHours(0, 0, 0, 0);
 
       if (payDate < nextCycleDate) {
-        let amt = Number(pay.amount);
+        if (pay.type === "loan_addition") {
+          // ADDING LOAN (Money GIVEN to customer)
+          // Simple approach: Increases Principal.
+          // Does NOT affect interest of CURRENT cycle (already calculated at start),
+          // but will be part of principal for NEXT cycle.
+          currentPrincipal += Number(pay.amount);
+          totalLoanAmount += Number(pay.amount); // Add to total loan ledger
+          // (Optional: We could track 'totalPrincipalLent' too if needed)
+        } else {
+          // PAYMENT (Money RECEIVED from customer)
+          let amt = Number(pay.amount);
 
-        if (amt > 0) {
-          // Pay Interest First
-          const interestClear = Math.min(amt, accruedInterest);
-          accruedInterest -= interestClear;
-          amt -= interestClear;
-          totalInterestPaid += interestClear;
-
-          // Pay Principal Second
           if (amt > 0) {
-            const principalClear = Math.min(amt, currentPrincipal);
-            currentPrincipal -= principalClear;
-            totalPrincipalPaid += principalClear;
+            // Pay Interest First
+            const interestClear = Math.min(amt, accruedInterest);
+            accruedInterest -= interestClear;
+            amt -= interestClear;
+            totalInterestPaid += interestClear;
+
+            // Pay Principal Second
+            if (amt > 0) {
+              const principalClear = Math.min(amt, currentPrincipal);
+              currentPrincipal -= principalClear;
+              totalPrincipalPaid += principalClear;
+            }
           }
         }
         processedPaymentsIdx++;
@@ -134,19 +146,26 @@ const calculateMonthlyInterest = (
   }
 
   // Handle payments made after the last cycle but before closing/today
+  // Handle payments made after the last cycle but before closing/today
   while (processedPaymentsIdx < sortedPayments.length) {
     const pay = sortedPayments[processedPaymentsIdx];
-    let amt = Number(pay.amount);
 
-    const interestClear = Math.min(amt, accruedInterest);
-    accruedInterest -= interestClear;
-    amt -= interestClear;
-    totalInterestPaid += interestClear;
+    if (pay.type === "loan_addition") {
+      currentPrincipal += Number(pay.amount);
+      totalLoanAmount += Number(pay.amount);
+    } else {
+      let amt = Number(pay.amount);
 
-    if (amt > 0) {
-      const principalClear = Math.min(amt, currentPrincipal);
-      currentPrincipal -= principalClear;
-      totalPrincipalPaid += principalClear;
+      const interestClear = Math.min(amt, accruedInterest);
+      accruedInterest -= interestClear;
+      amt -= interestClear;
+      totalInterestPaid += interestClear;
+
+      if (amt > 0) {
+        const principalClear = Math.min(amt, currentPrincipal);
+        currentPrincipal -= principalClear;
+        totalPrincipalPaid += principalClear;
+      }
     }
     processedPaymentsIdx++;
   }
@@ -160,7 +179,10 @@ const calculateMonthlyInterest = (
     daysHeld,
     totalPrincipalPaid: Math.round(totalPrincipalPaid),
     totalInterestPaid: Math.round(totalInterestPaid),
+    totalPrincipalPaid: Math.round(totalPrincipalPaid),
+    totalInterestPaid: Math.round(totalInterestPaid),
     payments: sortedPayments,
+    totalLoanAmount: totalLoanAmount,
   };
 };
 
@@ -179,6 +201,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
     new Date().toISOString().split("T")[0]
   );
   const [payRemark, setPayRemark] = useState("");
+  const [transactionType, setTransactionType] = useState("payment"); // 'payment' or 'loan_addition'
 
   // Payment Pagination State
   const [paymentPage, setPaymentPage] = useState(1);
@@ -192,6 +215,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
     totalPrincipalPaid,
     totalInterestPaid,
     payments,
+    totalLoanAmount,
   } = useMemo(
     () =>
       calculateMonthlyInterest(
@@ -247,7 +271,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
     if (newStatus === "Active") onClose();
   };
 
-  const handleAddPayment = () => {
+  const handleAddTransaction = () => {
     if (!payAmount || Number(payAmount) <= 0) {
       alert("Please enter a valid amount");
       return;
@@ -255,6 +279,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
 
     const newPayment = {
       id: Date.now().toString(),
+      type: transactionType, // 'payment' or 'loan_addition'
       amount: Number(payAmount),
       date: payDate,
       remark: payRemark,
@@ -263,13 +288,22 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
 
     const updatedPayments = [...(girvi.payments || []), newPayment];
 
+    // If it's a loan addition, we might want to update the base amount for record keeping?
+    // Actually, calculateMonthlyInterest handles dynamic principal.
+    // However, to keep the "Principal" field in the table somewhat meaningful, 
+    // we rely on the realtime calc.
+
     onUpdate(girvi.girviNumber, {
       payments: updatedPayments,
     });
 
     setPayAmount("");
     setPayRemark("");
-    alert("Payment Added Successfully ✅");
+    alert(
+      transactionType === "payment"
+        ? "Payment Received Successfully ✅"
+        : "Loan Added Successfully 💰"
+    );
   };
 
   return (
@@ -297,24 +331,22 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
         {/* Tabs */}
         <div className="flex border-b bg-gray-50">
           <button
-            className={`flex-1 py-3 font-bold text-sm transition border-b-2 ${
-              activeTab === "overview"
-                ? "border-yellow-600 text-yellow-800 bg-white"
-                : "border-transparent text-gray-500 hover:bg-gray-100"
-            }`}
+            className={`flex-1 py-3 font-bold text-sm transition border-b-2 ${activeTab === "overview"
+              ? "border-yellow-600 text-yellow-800 bg-white"
+              : "border-transparent text-gray-500 hover:bg-gray-100"
+              }`}
             onClick={() => setActiveTab("overview")}
           >
             Details & Overview
           </button>
           <button
-            className={`flex-1 py-3 font-bold text-sm transition border-b-2 ${
-              activeTab === "payments"
-                ? "border-blue-600 text-blue-800 bg-white"
-                : "border-transparent text-gray-500 hover:bg-gray-100"
-            }`}
+            className={`flex-1 py-3 font-bold text-sm transition border-b-2 ${activeTab === "payments"
+              ? "border-blue-600 text-blue-800 bg-white"
+              : "border-transparent text-gray-500 hover:bg-gray-100"
+              }`}
             onClick={() => setActiveTab("payments")}
           >
-            Payments History ({payments.length})
+            History ({payments.length})
           </button>
         </div>
 
@@ -350,7 +382,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                       Total Loan
                     </span>
                     <span className="text-gray-900 font-bold text-lg">
-                      ₹{girvi.amount.toLocaleString()}
+                      ₹{totalLoanAmount.toLocaleString()}
                     </span>
                   </div>
                   <div className="bg-white/60 p-2 rounded">
@@ -518,12 +550,53 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Add Payment Form */}
+              {/* Add Transaction Form */}
               {girvi.status === "Active" && (
-                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm">
-                  <h4 className="font-bold text-blue-800 mb-3 flex items-center gap-2 text-sm">
-                    <FaPlus size={12} /> Add Partial Payment
+                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                  <div className="flex gap-4 mb-4 border-b pb-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="transType"
+                        checked={transactionType === "payment"}
+                        onChange={() => setTransactionType("payment")}
+                        className="text-green-600 focus:ring-green-500"
+                      />
+                      <span className="text-sm font-bold text-gray-700">
+                        Receive Payment
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="transType"
+                        checked={transactionType === "loan_addition"}
+                        onChange={() => setTransactionType("loan_addition")}
+                        className="text-red-600 focus:ring-red-500"
+                      />
+                      <span className="text-sm font-bold text-gray-700">
+                        Give More Loan
+                      </span>
+                    </label>
+                  </div>
+
+                  <h4
+                    className={`font-bold mb-3 flex items-center gap-2 text-sm ${transactionType === "payment"
+                      ? "text-green-700"
+                      : "text-red-700"
+                      }`}
+                  >
+                    {transactionType === "payment" ? (
+                      <>
+                        <FaPlus size={12} /> Add Payment Entry
+                      </>
+                    ) : (
+                      <>
+                        <FaHandHoldingUsd size={14} /> Add New Loan Amount
+                      </>
+                    )}
                   </h4>
+
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                     <input
                       type="number"
@@ -547,21 +620,29 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                     />
                   </div>
                   <button
-                    onClick={handleAddPayment}
-                    className="w-full bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700 transition shadow-sm text-sm"
+                    onClick={handleAddTransaction}
+                    className={`w-full text-white py-2 rounded font-semibold transition shadow-sm text-sm ${transactionType === "payment"
+                      ? "bg-green-600 hover:bg-green-700"
+                      : "bg-red-600 hover:bg-red-700"
+                      }`}
                   >
-                    Record Payment
+                    {transactionType === "payment"
+                      ? "Record Payment Received"
+                      : "Record Loan Given"}
                   </button>
                 </div>
               )}
 
-              {/* Payments Table with Pagination */}
+              {/* History Table */}
               <div className="border rounded-xl overflow-hidden shadow-sm">
                 <table className="min-w-full text-sm divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-3 text-left font-bold text-gray-600">
                         Date
+                      </th>
+                      <th className="px-4 py-3 text-left font-bold text-gray-600">
+                        Type
                       </th>
                       <th className="px-4 py-3 text-left font-bold text-gray-600">
                         Amount
@@ -576,7 +657,23 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                       currentPayments.map((p) => (
                         <tr key={p.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-gray-600">{p.date}</td>
-                          <td className="px-4 py-3 font-bold text-green-700">
+                          <td className="px-4 py-3">
+                            {p.type === "loan_addition" ? (
+                              <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-bold">
+                                GIVEN
+                              </span>
+                            ) : (
+                              <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">
+                                RECEIVED
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className={`px-4 py-3 font-bold ${p.type === "loan_addition"
+                              ? "text-red-700"
+                              : "text-green-700"
+                              }`}
+                          >
                             ₹{p.amount.toLocaleString()}
                           </td>
                           <td className="px-4 py-3 text-gray-500 italic">
@@ -587,10 +684,10 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                     ) : (
                       <tr>
                         <td
-                          colSpan="3"
+                          colSpan="4"
                           className="text-center py-8 text-gray-400 italic"
                         >
-                          No payments recorded yet.
+                          No history recorded yet.
                         </td>
                       </tr>
                     )}
@@ -632,11 +729,10 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
             <button
               onClick={() => handleStatusChange("Closed")}
               disabled={total > 0}
-              className={`flex-1 w-full px-4 py-3 rounded-lg font-bold shadow transition flex justify-center items-center gap-2 text-sm uppercase tracking-wide ${
-                total > 0
-                  ? "bg-gray-400 text-gray-100 cursor-not-allowed"
-                  : "bg-red-600 text-white hover:bg-red-700"
-              }`}
+              className={`flex-1 w-full px-4 py-3 rounded-lg font-bold shadow transition flex justify-center items-center gap-2 text-sm uppercase tracking-wide ${total > 0
+                ? "bg-gray-400 text-gray-100 cursor-not-allowed"
+                : "bg-red-600 text-white hover:bg-red-700"
+                }`}
             >
               <FaLock />{" "}
               {total > 0
@@ -699,18 +795,23 @@ function GirviRecordsTable({ girviList, onViewDetails, onDelete }) {
                   <div className="text-xs text-gray-500">{g.contactNumber}</div>
                 </td>
                 <td className="px-4 py-3 font-bold text-gray-800">
-                  ₹{g.amount.toLocaleString()}
+                  ₹
+                  {(
+                    Number(g.amount) +
+                    (g.payments || [])
+                      .filter((p) => p.type === "loan_addition")
+                      .reduce((sum, p) => sum + Number(p.amount), 0)
+                  ).toLocaleString()}
                 </td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                   {g.date}
                 </td>
                 <td className="px-4 py-3">
                   <span
-                    className={`px-2 py-1 rounded text-xs font-bold ${
-                      g.status === "Active"
-                        ? "bg-green-100 text-green-700"
-                        : "bg-red-100 text-red-700"
-                    }`}
+                    className={`px-2 py-1 rounded text-xs font-bold ${g.status === "Active"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-red-100 text-red-700"
+                      }`}
                   >
                     {g.status}
                   </span>

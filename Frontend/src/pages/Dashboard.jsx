@@ -21,6 +21,7 @@ import {
   CalendarClock,
   TrendingUp,
   X as CloseIcon,
+  Filter,
 } from "lucide-react";
 import { db } from "../firebase";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
@@ -50,6 +51,14 @@ const Dashboard = () => {
   const [invoices, setInvoices] = React.useState([]);
   const [modalType, setModalType] = React.useState(null); // which popup is open
   const [currentPage, setCurrentPage] = React.useState(1);
+
+  // Filter State
+  const [dateFilter, setDateFilter] = React.useState("All Time");
+  const [showFilterBar, setShowFilterBar] = React.useState(false);
+  const [customRange, setCustomRange] = React.useState({
+    start: "",
+    end: "",
+  });
 
   React.useEffect(() => {
     const ref = query(collection(db, "invoices"), orderBy("createdAt", "desc"));
@@ -86,19 +95,68 @@ const Dashboard = () => {
     return null;
   };
 
+  // ====== FILTERING LOGIC ======
+  const filteredInvoices = React.useMemo(() => {
+    if (dateFilter === "All Time") return invoices;
+
+    const now = new Date();
+    const startOfDay = new Date(now.setHours(0, 0, 0, 0));
+
+    return invoices.filter((inv) => {
+      const d = getInvoiceDate(inv);
+      if (!d) return false;
+      const dTime = d.getTime();
+
+      switch (dateFilter) {
+        case "Today":
+          return dTime >= startOfDay.getTime();
+        case "This Month":
+          return (
+            d.getMonth() === new Date().getMonth() &&
+            d.getFullYear() === new Date().getFullYear()
+          );
+        case "This Quarter": {
+          const currentMonth = new Date().getMonth();
+          const qStartMonth =
+            Math.floor(currentMonth / 3) * 3; // 0, 3, 6, 9
+          const qStart = new Date(new Date().getFullYear(), qStartMonth, 1);
+          const qEnd = new Date(
+            new Date().getFullYear(),
+            qStartMonth + 3,
+            0
+          );
+          return dTime >= qStart.getTime() && dTime <= qEnd.getTime();
+        }
+        case "This Year":
+          return d.getFullYear() === new Date().getFullYear();
+        case "Custom":
+          if (!customRange.start || !customRange.end) return true;
+          const s = new Date(customRange.start);
+          const e = new Date(customRange.end);
+          e.setHours(23, 59, 59, 999); // End of day
+          return dTime >= s.getTime() && dTime <= e.getTime();
+        default:
+          return true;
+      }
+    });
+  }, [invoices, dateFilter, customRange]);
+
   // ====== CORE STATS FROM INVOICES ======
 
-  // Total Sales (all time)
+  // Total Sales (Filtered)
   const totalSales = React.useMemo(
     () =>
-      invoices.reduce((sum, inv) => sum + Number(inv.grandTotal || 0), 0),
-    [invoices]
+      filteredInvoices.reduce(
+        (sum, inv) => sum + Number(inv.grandTotal || 0),
+        0
+      ),
+    [filteredInvoices]
   );
 
-  // Pending invoices (balanceDue > 0)
+  // Pending invoices (balanceDue > 0) - Filtered
   const pendingInvoices = React.useMemo(
-    () => invoices.filter((inv) => Number(inv.balanceDue || 0) > 0),
-    [invoices]
+    () => filteredInvoices.filter((inv) => Number(inv.balanceDue || 0) > 0),
+    [filteredInvoices]
   );
   const totalPendingAmount = React.useMemo(
     () =>
@@ -109,8 +167,8 @@ const Dashboard = () => {
     [pendingInvoices]
   );
 
-  // Total Orders
-  const totalOrders = invoices.length;
+  // Total Orders (Filtered)
+  const totalOrders = filteredInvoices.length;
 
   // Today invoices -> based on createdAt (fallback to date)
   const todayInvoices = React.useMemo(
@@ -153,7 +211,7 @@ const Dashboard = () => {
   const monthlyChartData = React.useMemo(() => {
     const map = {};
 
-    invoices.forEach((inv) => {
+    filteredInvoices.forEach((inv) => {
       const d = getValidDate(inv.date);
       if (!d) return;
       const ymKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
@@ -174,14 +232,14 @@ const Dashboard = () => {
     return Object.values(map)
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .slice(-6); // last 6 months
-  }, [invoices]);
+  }, [filteredInvoices]);
 
   // ====== TOP SELLING PRODUCTS (TOTAL GRAMS) ======
 
   const topProducts = React.useMemo(() => {
     const productMap = {};
 
-    invoices.forEach((inv) => {
+    filteredInvoices.forEach((inv) => {
       const items = inv.newItems || inv.items || [];
       items.forEach((item) => {
         if (!item.name) return;
@@ -203,7 +261,7 @@ const Dashboard = () => {
     return Object.values(productMap)
       .sort((a, b) => b.totalWeight - a.totalWeight)
       .slice(0, 5);
-  }, [invoices]);
+  }, [filteredInvoices]);
 
   // ====== MODAL DATA HELPERS ======
 
@@ -441,7 +499,71 @@ const Dashboard = () => {
             Here's a summary of your shop's activity.
           </p>
         </div>
+
+        <button
+          onClick={() => setShowFilterBar(!showFilterBar)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg border shadow-sm transition-all duration-300 font-bold text-sm ${showFilterBar
+              ? "bg-slate-800 text-white border-slate-800 shadow-md"
+              : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-brand-gold"
+            }`}
+        >
+          <Filter size={18} />
+          {showFilterBar ? "Hide Filters" : "Show Filters"}
+        </button>
       </div>
+
+      {/* Date Filter Controls */}
+      {showFilterBar && (
+        <div className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 flex flex-wrap gap-3 items-center animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-gray-700 flex items-center gap-2">
+              <Filter size={16} /> Filter by:
+            </span>
+            <select
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              className="bg-gray-50 border border-gray-300 text-gray-900 text-xs font-bold rounded-lg focus:ring-brand-gold focus:border-brand-gold block p-2 outline-none cursor-pointer hover:bg-gray-100 transition"
+            >
+              {[
+                "All Time",
+                "Today",
+                "This Month",
+                "This Quarter",
+                "This Year",
+                "Custom",
+              ].map((filter) => (
+                <option key={filter} value={filter}>
+                  {filter}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {dateFilter === "Custom" && (
+            <div className="flex items-center gap-2 ml-2 bg-gray-50 p-1.5 px-3 rounded-lg border border-gray-200">
+              <label className="text-[10px] font-bold text-gray-500 uppercase">From:</label>
+              <input
+                type="date"
+                value={customRange.start}
+                onChange={(e) =>
+                  setCustomRange({ ...customRange, start: e.target.value })
+                }
+                className="text-xs bg-transparent outline-none text-gray-700 font-medium"
+              />
+              <span className="text-gray-400">|</span>
+              <label className="text-[10px] font-bold text-gray-500 uppercase">To:</label>
+              <input
+                type="date"
+                value={customRange.end}
+                onChange={(e) =>
+                  setCustomRange({ ...customRange, end: e.target.value })
+                }
+                className="text-xs bg-transparent outline-none text-gray-700 font-medium"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Stats Cards (Option A) */}
       <div className="grid grid-cols-1 sm:grid-cols-1 lg:grid-cols-2 gap-5">
@@ -633,7 +755,7 @@ const Dashboard = () => {
             </thead>
 
             <tbody className="bg-white divide-y divide-gray-200">
-              {invoices.slice(0, 6).map((tx) => (
+              {filteredInvoices.slice(0, 6).map((tx) => (
                 <tr
                   key={tx.invoiceNo || tx.id}
                   className="hover:bg-gray-50 transition"
@@ -671,7 +793,7 @@ const Dashboard = () => {
                 </tr>
               ))}
 
-              {invoices.length === 0 && (
+              {filteredInvoices.length === 0 && (
                 <tr>
                   <td
                     colSpan={4}
