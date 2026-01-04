@@ -6,7 +6,7 @@ import {
   Package,
   Database,
   LineChart,
-  LogOut,
+  ShoppingBag, // 1. यहाँ नया Icon import किया है
 } from "lucide-react";
 
 // Reusable Nav Item
@@ -36,7 +36,6 @@ const Sidebar = () => {
       <div className="hidden md:flex flex-col w-64 lg:w-64 bg-white border-r shadow-lg h-screen fixed">
         <div className="flex-1 flex flex-col pt-5 pb-4 overflow-y-auto">
           <nav className="mt-5 px-3 space-y-2">
-
             <NavItem
               to="/"
               icon={<LayoutDashboard size={22} />}
@@ -49,17 +48,16 @@ const Sidebar = () => {
               label="Billing"
             />
 
+            <NavItem to="/girwi" icon={<Database size={22} />} label="Girwi" />
+
+            {/* 2. यहाँ Desktop Sidebar में Purchase Tab जोड़ा है */}
             <NavItem
-              to="/girwi"
-              icon={<Database size={22} />}
-              label="Girwi"
+              to="/purchase"
+              icon={<ShoppingBag size={22} />}
+              label="Purchase"
             />
 
-            <NavItem
-              to="/stock"
-              icon={<Package size={22} />}
-              label="Stock"
-            />
+            <NavItem to="/stock" icon={<Package size={22} />} label="Stock" />
 
             <NavItem
               to="/reports"
@@ -70,13 +68,10 @@ const Sidebar = () => {
         </div>
 
         {/* Logout bottom */}
-        
       </div>
-      
 
       {/* ----- MOBILE BOTTOM NAVIGATION BAR ----- */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg flex justify-between px-4 py-3 z-10 ">
-
         <NavLink
           to="/"
           className={({ isActive }) =>
@@ -101,17 +96,21 @@ const Sidebar = () => {
           <span>Billing</span>
         </NavLink>
 
+        {/* 3. यहाँ Mobile Menu में Purchase Tab जोड़ा है */}
         <NavLink
-          to="/girwi"
+          to="/purchase"
           className={({ isActive }) =>
             `flex flex-col items-center text-xs ${
               isActive ? "text-brand-gold font-bold" : "text-gray-600"
             }`
           }
         >
-          <Database size={22} />
-          <span>Girwi</span>
+          <ShoppingBag size={22} />
+          <span>Buy</span>
         </NavLink>
+
+        {/* Mobile में जगह कम होती है, इसलिए 'Girwi' या 'Stock' को आवश्यकतानुसार रखें। 
+            मैंने अभी 5 items adjust किए हैं जो आम तौर पर फिट हो जाते हैं। */}
 
         <NavLink
           to="/stock"
@@ -136,7 +135,6 @@ const Sidebar = () => {
           <LineChart size={22} />
           <span>Reports</span>
         </NavLink>
-
       </div>
     </>
   );

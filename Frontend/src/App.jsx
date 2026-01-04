@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import Billing from "./pages/Billing";
 import Girwi from "./pages/Girwi";
 import Stock from "./pages/Stock";
+import Purchase from "./pages/Purchase"; // 1. यहाँ Purchase पेज import किया
 import Reports from "./pages/Reports";
 import Profile from "./pages/Profile";
 import ResetPassword from "./pages/ResetPassword";
@@ -30,6 +31,10 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/billing" element={<Billing />} />
         <Route path="/girwi" element={<Girwi />} />
+
+        {/* 2. यहाँ Purchase का Route जोड़ा */}
+        <Route path="/purchase" element={<Purchase />} />
+
         <Route path="/stock" element={<Stock />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/profile" element={<Profile />} />
