@@ -17,8 +17,9 @@ import {
   FaHandHoldingUsd,
   FaChartLine,
   FaSave,
+  FaEdit,
 } from "react-icons/fa";
-import { db } from "../firebase"; // Ensure this path is correct for your project
+import { db } from "../firebase"; // Ensure path is correct
 import {
   collection,
   addDoc,
@@ -32,7 +33,7 @@ import {
 } from "firebase/firestore";
 
 // ==========================================
-// 🧮 CORE INTEREST CALCULATION ENGINE
+// 🧮 CORE INTEREST CALCULATION ENGINE (FIXED)
 // ==========================================
 const calculateMonthlyInterest = (
   principal,
@@ -50,6 +51,7 @@ const calculateMonthlyInterest = (
       totalPrincipalPaid: 0,
       totalInterestPaid: 0,
       payments: [],
+      totalLoanAmount: principal,
     };
 
   const start = new Date(startDate);
@@ -66,6 +68,7 @@ const calculateMonthlyInterest = (
   let accruedInterest = 0;
   let totalPrincipalPaid = 0;
   let totalInterestPaid = 0;
+  let totalLoanAmount = Number(principal); // Track total money lent
 
   // Sort payments chronologically
   const sortedPayments = [...payments].sort(
@@ -91,7 +94,8 @@ const calculateMonthlyInterest = (
     // Stop if the charging date is in the future
     if (chargeDate > end) break;
 
-    // 1. CHARGE INTEREST
+    // 1. CHARGE INTEREST (Upfront for the month on current principal)
+    // This handles the OLD principal.
     const interestForMonth = Math.round(currentPrincipal * (rate / 100));
     accruedInterest += interestForMonth;
 
@@ -108,20 +112,36 @@ const calculateMonthlyInterest = (
       payDate.setHours(0, 0, 0, 0);
 
       if (payDate < nextCycleDate) {
-        let amt = Number(pay.amount);
+        if (pay.type === "loan_addition") {
+          // ✅ FIX: LOAN ADDED
+          let addedAmt = Number(pay.amount);
 
-        if (amt > 0) {
-          // Pay Interest First
-          const interestClear = Math.min(amt, accruedInterest);
-          accruedInterest -= interestClear;
-          amt -= interestClear;
-          totalInterestPaid += interestClear;
+          // A. Increase Principal immediately
+          currentPrincipal += addedAmt;
+          totalLoanAmount += addedAmt;
 
-          // Pay Principal Second
+          // B. CHARGE INTEREST IMMEDIATELY on this NEW money
+          // Since the month's interest loop already ran above for the old amount,
+          // we need to manually add interest for this new amount right now.
+          const interestOnNewMoney = Math.round(addedAmt * (rate / 100));
+          accruedInterest += interestOnNewMoney;
+        } else {
+          // PAYMENT RECEIVED
+          let amt = Number(pay.amount);
+
           if (amt > 0) {
-            const principalClear = Math.min(amt, currentPrincipal);
-            currentPrincipal -= principalClear;
-            totalPrincipalPaid += principalClear;
+            // Pay Interest First
+            const interestClear = Math.min(amt, accruedInterest);
+            accruedInterest -= interestClear;
+            amt -= interestClear;
+            totalInterestPaid += interestClear;
+
+            // Pay Principal Second
+            if (amt > 0) {
+              const principalClear = Math.min(amt, currentPrincipal);
+              currentPrincipal -= principalClear;
+              totalPrincipalPaid += principalClear;
+            }
           }
         }
         processedPaymentsIdx++;
@@ -134,20 +154,31 @@ const calculateMonthlyInterest = (
     if (monthCount > 1200) break; // Safety brake
   }
 
-  // Handle payments made after the last cycle but before closing/today
+  // Handle payments/additions made AFTER the last full month cycle but BEFORE today
   while (processedPaymentsIdx < sortedPayments.length) {
     const pay = sortedPayments[processedPaymentsIdx];
-    let amt = Number(pay.amount);
 
-    const interestClear = Math.min(amt, accruedInterest);
-    accruedInterest -= interestClear;
-    amt -= interestClear;
-    totalInterestPaid += interestClear;
+    if (pay.type === "loan_addition") {
+      let addedAmt = Number(pay.amount);
+      currentPrincipal += addedAmt;
+      totalLoanAmount += addedAmt;
 
-    if (amt > 0) {
-      const principalClear = Math.min(amt, currentPrincipal);
-      currentPrincipal -= principalClear;
-      totalPrincipalPaid += principalClear;
+      // Even if it's the last incomplete month, if money is given, interest is charged (Upfront rule)
+      const interestOnNewMoney = Math.round(addedAmt * (rate / 100));
+      accruedInterest += interestOnNewMoney;
+    } else {
+      let amt = Number(pay.amount);
+
+      const interestClear = Math.min(amt, accruedInterest);
+      accruedInterest -= interestClear;
+      amt -= interestClear;
+      totalInterestPaid += interestClear;
+
+      if (amt > 0) {
+        const principalClear = Math.min(amt, currentPrincipal);
+        currentPrincipal -= principalClear;
+        totalPrincipalPaid += principalClear;
+      }
     }
     processedPaymentsIdx++;
   }
@@ -162,6 +193,7 @@ const calculateMonthlyInterest = (
     totalPrincipalPaid: Math.round(totalPrincipalPaid),
     totalInterestPaid: Math.round(totalInterestPaid),
     payments: sortedPayments,
+    totalLoanAmount: totalLoanAmount,
   };
 };
 
@@ -169,30 +201,47 @@ const calculateMonthlyInterest = (
 // 👁️ VIEW DETAILS / ADD PAYMENT MODAL
 // ==========================================
 function ViewDetailsModal({ girvi, onClose, onUpdate }) {
-  const [activeTab, setActiveTab] = useState("overview"); // 'overview' | 'payments'
+  const [activeTab, setActiveTab] = useState("overview");
+
+  // -- Financial State --
   const [currentInterestRate, setCurrentInterestRate] = useState(
     girvi.interestRate || 2
   );
 
-  // Payment Form State
+  // -- Edit Details State --
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: girvi.name || "",
+    contactNumber: girvi.contactNumber || "",
+    Address: girvi.Address || "",
+    itemDescription: girvi.itemDescription || "",
+    weight: girvi.weight || "",
+    purity: girvi.purity || "",
+    lockerId: girvi.lockerId || "",
+    startDate: girvi.startDate || "",
+  });
+
+  // -- Transaction Form State --
   const [payAmount, setPayAmount] = useState("");
   const [payDate, setPayDate] = useState(
     new Date().toISOString().split("T")[0]
   );
   const [payRemark, setPayRemark] = useState("");
+  const [transactionType, setTransactionType] = useState("payment"); // 'payment' | 'loan_addition'
 
-  // Payment Pagination State
+  // -- Pagination State --
   const [paymentPage, setPaymentPage] = useState(1);
-  const PAYMENT_ITEMS_PER_PAGE = 5;
+  const PAYMENT_ITEMS_PER_PAGE = 4;
 
+  // Recalculate Logic
   const {
     total,
     interest,
     principalRemaining,
-    daysHeld,
     totalPrincipalPaid,
     totalInterestPaid,
     payments,
+    totalLoanAmount,
   } = useMemo(
     () =>
       calculateMonthlyInterest(
@@ -212,20 +261,20 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
     ]
   );
 
-  // Pagination Logic for Payments
+  // Pagination Logic
   const totalPaymentPages = Math.ceil(payments.length / PAYMENT_ITEMS_PER_PAGE);
   const currentPayments = payments.slice(
     (paymentPage - 1) * PAYMENT_ITEMS_PER_PAGE,
     paymentPage * PAYMENT_ITEMS_PER_PAGE
   );
 
-  // Reset page if payments change drastically
   useEffect(() => {
     if (paymentPage > totalPaymentPages && totalPaymentPages > 0) {
       setPaymentPage(totalPaymentPages);
     }
   }, [payments.length, totalPaymentPages, paymentPage]);
 
+  // ✅ 1. UPDATE STATUS
   const handleStatusChange = (newStatus) => {
     let date = null;
     let time = null;
@@ -237,48 +286,67 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
         hour12: true,
       });
     }
-
     onUpdate(girvi.girviNumber, {
       status: newStatus,
       closedDate: date,
       closedTime: time,
       interestRate: Number(currentInterestRate),
     });
-
     if (newStatus === "Active") onClose();
   };
 
-  // ✅ Function: Save Interest Rate Manually
+  // ✅ 2. SAVE INTEREST RATE
   const handleSaveInterest = () => {
-    onUpdate(girvi.girviNumber, {
-      interestRate: Number(currentInterestRate),
-    });
+    onUpdate(girvi.girviNumber, { interestRate: Number(currentInterestRate) });
     alert("Interest Rate Updated Successfully! ✅");
   };
 
-  const handleAddPayment = () => {
+  // ✅ 3. ADD TRANSACTION (Payment or Loan Addition)
+  const handleAddTransaction = () => {
     if (!payAmount || Number(payAmount) <= 0) {
       alert("Please enter a valid amount");
       return;
     }
-
     const newPayment = {
       id: Date.now().toString(),
+      type: transactionType,
       amount: Number(payAmount),
       date: payDate,
       remark: payRemark,
       createdAt: new Date().toISOString(),
     };
-
     const updatedPayments = [...(girvi.payments || []), newPayment];
-
-    onUpdate(girvi.girviNumber, {
-      payments: updatedPayments,
-    });
-
+    onUpdate(girvi.girviNumber, { payments: updatedPayments });
     setPayAmount("");
     setPayRemark("");
-    alert("Payment Added Successfully ✅");
+    alert(
+      transactionType === "payment"
+        ? "Payment Recorded ✅"
+        : "Loan Amount Added + Interest Charged 💰"
+    );
+  };
+
+  // ✅ 4. DELETE TRANSACTION
+  const handleDeleteTransaction = (paymentId) => {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this entry? Calculation will change."
+      )
+    ) {
+      const updatedPayments = girvi.payments.filter((p) => p.id !== paymentId);
+      onUpdate(girvi.girviNumber, { payments: updatedPayments });
+    }
+  };
+
+  // ✅ 5. EDIT DETAILS HANDLER
+  const handleEditChange = (e) => {
+    setEditForm({ ...editForm, [e.target.name]: e.target.value });
+  };
+
+  const handleSaveDetails = () => {
+    onUpdate(girvi.girviNumber, editForm);
+    setIsEditingDetails(false);
+    alert("Details Updated Successfully! ✅");
   };
 
   return (
@@ -295,12 +363,40 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
               {girvi.itemDescription || "No Description"}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-red-500 transition p-2"
-          >
-            <FaTimes size={22} />
-          </button>
+
+          <div className="flex gap-2">
+            {/* EDIT MODE TOGGLE BUTTON */}
+            {activeTab === "overview" && (
+              <button
+                onClick={() =>
+                  isEditingDetails
+                    ? handleSaveDetails()
+                    : setIsEditingDetails(true)
+                }
+                className={`p-2 rounded-lg flex items-center gap-2 font-bold text-sm shadow-sm transition ${
+                  isEditingDetails
+                    ? "bg-green-100 text-green-700"
+                    : "bg-blue-50 text-blue-600"
+                }`}
+              >
+                {isEditingDetails ? (
+                  <>
+                    <FaSave /> Save
+                  </>
+                ) : (
+                  <>
+                    <FaEdit /> Edit Details
+                  </>
+                )}
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-red-500 transition p-2"
+            >
+              <FaTimes size={22} />
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -323,15 +419,15 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
             }`}
             onClick={() => setActiveTab("payments")}
           >
-            Payments History ({payments.length})
+            History ({payments.length})
           </button>
         </div>
 
-        {/* Modal Content - Scrollable */}
+        {/* Content */}
         <div className="p-6 overflow-y-auto flex-1 bg-white">
           {activeTab === "overview" ? (
             <div className="space-y-6">
-              {/* Financial Status Section */}
+              {/* Financial Status */}
               <div className="bg-gradient-to-br from-yellow-50 to-orange-50 p-5 rounded-xl border border-yellow-100 shadow-sm">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-yellow-800 font-bold flex items-center gap-2 text-lg">
@@ -339,16 +435,17 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                   </h3>
                   <div className="flex items-center gap-2 bg-white px-2 py-1 rounded border border-yellow-200 shadow-sm">
                     <label className="text-xs font-bold text-gray-600">
-                      INT. RATE (%):
+                      RATE (%):
                     </label>
                     <input
                       type="number"
                       value={currentInterestRate}
-                      onChange={(e) => setCurrentInterestRate(e.target.value)}
+                      onChange={(e) =>
+                        setCurrentInterestRate(Number(e.target.value))
+                      }
                       className="w-12 p-0 text-center border-none focus:ring-0 font-bold text-yellow-700 bg-transparent text-sm"
                       disabled={girvi.status === "Closed"}
                     />
-                    {/* Save Interest Button */}
                     {girvi.status !== "Closed" && (
                       <button
                         onClick={handleSaveInterest}
@@ -364,10 +461,10 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   <div className="bg-white/60 p-2 rounded">
                     <span className="block text-gray-500 text-xs uppercase font-bold">
-                      Total Loan
+                      Total Loan Given
                     </span>
                     <span className="text-gray-900 font-bold text-lg">
-                      ₹{girvi.amount.toLocaleString()}
+                      ₹{totalLoanAmount.toLocaleString()}
                     </span>
                   </div>
                   <div className="bg-white/60 p-2 rounded">
@@ -396,16 +493,16 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                   </div>
                 </div>
 
-                {/* Collection Stats */}
+                {/* ✅ RECOVERED AMOUNT STATS (RESTORED) */}
                 <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-yellow-200/50">
                   <div className="flex justify-between text-xs text-green-700 font-medium">
-                    <span>Total Principal Recv:</span>
+                    <span>Total Principal Paid:</span>
                     <span className="font-bold">
                       ₹{totalPrincipalPaid.toLocaleString()}
                     </span>
                   </div>
                   <div className="flex justify-between text-xs text-blue-700 font-medium">
-                    <span>Total Interest Recv:</span>
+                    <span>Total Interest Paid:</span>
                     <span className="font-bold">
                       ₹{totalInterestPaid.toLocaleString()}
                     </span>
@@ -413,7 +510,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                 </div>
               </div>
 
-              {/* Detailed Info Grid */}
+              {/* Detailed Info Grid with Edit Mode Support */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Customer Details */}
                 <div className="space-y-3">
@@ -426,49 +523,70 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                       <span className="text-gray-500 text-xs block">
                         Full Name
                       </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.name}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          name="name"
+                          value={editForm.name}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-900">
+                          {girvi.name}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-gray-500 text-xs block">
                         Contact No
                       </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.contactNumber || "-"}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          name="contactNumber"
+                          value={editForm.contactNumber}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-900">
+                          {girvi.contactNumber || "-"}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-gray-500 text-xs block">
                         Start Date
                       </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.startDate}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 text-xs block">
-                        ID Proof Type
-                      </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.idProofType || "-"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 text-xs block">
-                        ID Proof No
-                      </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.idProofNumber || "-"}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          type="date"
+                          name="startDate"
+                          value={editForm.startDate}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-900">
+                          {girvi.startDate}
+                        </span>
+                      )}
                     </div>
                     <div className="col-span-2">
                       <span className="text-gray-500 text-xs block">
                         Address
                       </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.Address || "-"}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          name="Address"
+                          value={editForm.Address}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-900">
+                          {girvi.Address || "-"}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -483,96 +601,143 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                       <span className="text-gray-500 text-xs block">
                         Description
                       </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.itemDescription || "N/A"}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          name="itemDescription"
+                          value={editForm.itemDescription}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-900">
+                          {girvi.itemDescription || "N/A"}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-gray-500 text-xs block">
                         Weight (g)
                       </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.weight || "-"}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          name="weight"
+                          value={editForm.weight}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-900">
+                          {girvi.weight || "-"}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-gray-500 text-xs block">
                         Purity
                       </span>
-                      <span className="font-medium text-gray-900">
-                        {girvi.purity || "-"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 text-xs block">
-                        Market Value
-                      </span>
-                      <span className="font-medium text-gray-900">
-                        ₹{Number(girvi.marketValue || 0).toLocaleString()}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          name="purity"
+                          value={editForm.purity}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="font-medium text-gray-900">
+                          {girvi.purity || "-"}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-gray-500 text-xs block">
                         Locker ID
                       </span>
-                      <span className="bg-gray-100 px-2 py-0.5 rounded text-gray-800 font-bold inline-block text-xs">
-                        {girvi.lockerId || "N/A"}
-                      </span>
+                      {isEditingDetails ? (
+                        <input
+                          name="lockerId"
+                          value={editForm.lockerId}
+                          onChange={handleEditChange}
+                          className="w-full border p-1 rounded"
+                        />
+                      ) : (
+                        <span className="bg-gray-100 px-2 py-0.5 rounded text-gray-800 font-bold inline-block text-xs">
+                          {girvi.lockerId || "N/A"}
+                        </span>
+                      )}
                     </div>
                   </div>
-                </div>
-
-                {/* Remarks */}
-                <div className="col-span-1 md:col-span-2">
-                  <h4 className="font-bold text-gray-800 flex items-center gap-2 border-b pb-1 mb-2">
-                    <FaStickyNote className="text-gray-400" size={14} /> Remarks
-                  </h4>
-                  <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg italic">
-                    {girvi.remark || "No remarks added."}
-                  </p>
                 </div>
               </div>
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Add Payment Form */}
+              {/* Add Transaction Form */}
               {girvi.status === "Active" && (
-                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm">
-                  <h4 className="font-bold text-blue-800 mb-3 flex items-center gap-2 text-sm">
-                    <FaPlus size={12} /> Add Partial Payment
-                  </h4>
+                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                  <div className="flex gap-4 mb-4 border-b pb-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="transType"
+                        checked={transactionType === "payment"}
+                        onChange={() => setTransactionType("payment")}
+                        className="text-green-600 focus:ring-green-500"
+                      />
+                      <span className="text-sm font-bold text-gray-700">
+                        Receive Payment
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="transType"
+                        checked={transactionType === "loan_addition"}
+                        onChange={() => setTransactionType("loan_addition")}
+                        className="text-red-600 focus:ring-red-500"
+                      />
+                      <span className="text-sm font-bold text-gray-700">
+                        Give More Loan
+                      </span>
+                    </label>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                     <input
                       type="number"
                       placeholder="Amount (₹)"
-                      className="p-2 border rounded text-sm w-full focus:ring-2 focus:ring-blue-400 outline-none"
+                      className="p-2 border rounded text-sm w-full outline-none focus:ring-2 focus:ring-blue-400"
                       value={payAmount}
                       onChange={(e) => setPayAmount(e.target.value)}
                     />
                     <input
                       type="date"
-                      className="p-2 border rounded text-sm w-full focus:ring-2 focus:ring-blue-400 outline-none"
+                      className="p-2 border rounded text-sm w-full outline-none focus:ring-2 focus:ring-blue-400"
                       value={payDate}
                       onChange={(e) => setPayDate(e.target.value)}
                     />
                     <input
                       type="text"
                       placeholder="Remark (Optional)"
-                      className="p-2 border rounded text-sm w-full focus:ring-2 focus:ring-blue-400 outline-none"
+                      className="p-2 border rounded text-sm w-full outline-none focus:ring-2 focus:ring-blue-400"
                       value={payRemark}
                       onChange={(e) => setPayRemark(e.target.value)}
                     />
                   </div>
                   <button
-                    onClick={handleAddPayment}
-                    className="w-full bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700 transition shadow-sm text-sm"
+                    onClick={handleAddTransaction}
+                    className={`w-full text-white py-2 rounded font-semibold transition shadow-sm text-sm ${
+                      transactionType === "payment"
+                        ? "bg-green-600 hover:bg-green-700"
+                        : "bg-red-600 hover:bg-red-700"
+                    }`}
                   >
-                    Record Payment
+                    {transactionType === "payment"
+                      ? "Record Payment Received"
+                      : "Record Loan Given (+1 Month Interest)"}
                   </button>
                 </div>
               )}
 
-              {/* Payments Table with Pagination */}
+              {/* History Table with Delete & Pagination */}
               <div className="border rounded-xl overflow-hidden shadow-sm">
                 <table className="min-w-full text-sm divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -581,10 +746,16 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                         Date
                       </th>
                       <th className="px-4 py-3 text-left font-bold text-gray-600">
+                        Type
+                      </th>
+                      <th className="px-4 py-3 text-left font-bold text-gray-600">
                         Amount
                       </th>
                       <th className="px-4 py-3 text-left font-bold text-gray-600">
                         Remark
+                      </th>
+                      <th className="px-4 py-3 text-center font-bold text-gray-600">
+                        Action
                       </th>
                     </tr>
                   </thead>
@@ -593,21 +764,47 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                       currentPayments.map((p) => (
                         <tr key={p.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-gray-600">{p.date}</td>
-                          <td className="px-4 py-3 font-bold text-green-700">
+                          <td className="px-4 py-3">
+                            {p.type === "loan_addition" ? (
+                              <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-bold">
+                                GIVEN
+                              </span>
+                            ) : (
+                              <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">
+                                RECEIVED
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className={`px-4 py-3 font-bold ${
+                              p.type === "loan_addition"
+                                ? "text-red-700"
+                                : "text-green-700"
+                            }`}
+                          >
                             ₹{p.amount.toLocaleString()}
                           </td>
                           <td className="px-4 py-3 text-gray-500 italic">
                             {p.remark || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={() => handleDeleteTransaction(p.id)}
+                              className="text-red-500 hover:bg-red-50 p-2 rounded transition"
+                              title="Delete Entry"
+                            >
+                              <FaTrash size={14} />
+                            </button>
                           </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
                         <td
-                          colSpan="3"
+                          colSpan="5"
                           className="text-center py-8 text-gray-400 italic"
                         >
-                          No payments recorded yet.
+                          No history recorded yet.
                         </td>
                       </tr>
                     )}
@@ -615,13 +812,13 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                 </table>
               </div>
 
-              {/* Pagination Controls */}
+              {/* Pagination Controls (4 per page) */}
               {totalPaymentPages > 1 && (
                 <div className="flex justify-between items-center text-sm">
                   <button
                     onClick={() => setPaymentPage((p) => Math.max(1, p - 1))}
                     disabled={paymentPage === 1}
-                    className="flex items-center gap-1 px-3 py-1.5 border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
+                    className="flex items-center gap-1 px-3 py-1.5 border rounded hover:bg-gray-50 disabled:opacity-50 text-gray-600"
                   >
                     <FaArrowLeft size={10} /> Prev
                   </button>
@@ -633,7 +830,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
                       setPaymentPage((p) => Math.min(totalPaymentPages, p + 1))
                     }
                     disabled={paymentPage === totalPaymentPages}
-                    className="flex items-center gap-1 px-3 py-1.5 border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
+                    className="flex items-center gap-1 px-3 py-1.5 border rounded hover:bg-gray-50 disabled:opacity-50 text-gray-600"
                   >
                     Next <FaArrowRight size={10} />
                   </button>
@@ -643,7 +840,7 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
           )}
         </div>
 
-        {/* Modal Footer Actions */}
+        {/* Footer Actions */}
         <div className="p-5 border-t bg-gray-50 rounded-b-2xl flex flex-col sm:flex-row justify-between items-center gap-3">
           {girvi.status === "Active" ? (
             <button
@@ -668,7 +865,6 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
               <FaLockOpen /> Re-Open Deal
             </button>
           )}
-
           <button
             onClick={onClose}
             className="flex-1 w-full bg-white border border-gray-300 text-gray-700 px-4 py-3 rounded-lg font-bold hover:bg-gray-100 transition text-sm uppercase tracking-wide"
@@ -684,18 +880,13 @@ function ViewDetailsModal({ girvi, onClose, onUpdate }) {
 // ==========================================
 // 📋 RECORDS TABLE
 // ==========================================
-function GirviRecordsTable({
-  girviList,
-  totalRecords,
-  onViewDetails,
-  onDelete,
-}) {
+function GirviRecordsTable({ girviList, onViewDetails, onDelete }) {
   return (
     <div className="bg-white shadow-lg rounded-xl overflow-hidden border border-gray-200">
       <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
         <h2 className="text-lg font-bold text-gray-700">All Records</h2>
         <span className="text-xs font-semibold bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
-          Total: {totalRecords}
+          Total: {girviList.length}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -704,7 +895,7 @@ function GirviRecordsTable({
             <tr>
               <th className="px-4 py-3 text-left">ID</th>
               <th className="px-4 py-3 text-left">Customer</th>
-              <th className="px-4 py-3 text-left">Loan Amt</th>
+              <th className="px-4 py-3 text-left">Total Loan</th>
               <th className="px-4 py-3 text-left">Date</th>
               <th className="px-4 py-3 text-left">Status</th>
               <th className="px-4 py-3 text-center">Action</th>
@@ -721,7 +912,13 @@ function GirviRecordsTable({
                   <div className="text-xs text-gray-500">{g.contactNumber}</div>
                 </td>
                 <td className="px-4 py-3 font-bold text-gray-800">
-                  ₹{g.amount.toLocaleString()}
+                  {/* Calculate Dynamic Total for Display */}₹
+                  {(
+                    Number(g.amount) +
+                    (g.payments || [])
+                      .filter((p) => p.type === "loan_addition")
+                      .reduce((sum, p) => sum + Number(p.amount), 0)
+                  ).toLocaleString()}
                 </td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                   {g.date}
@@ -783,19 +980,16 @@ export default function GirviPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const recordsPerPage = 10;
 
-  // Stats State
   const [stats, setStats] = useState({
     activePrincipal: 0,
     totalInterestCollected: 0,
     totalPrincipalRecovered: 0,
   });
 
-  // Initial Load
   useEffect(() => {
     handleSearch("");
   }, []);
 
-  // Update Stats whenever list changes
   useEffect(() => {
     let activeP = 0;
     let totalInt = 0;
@@ -809,10 +1003,7 @@ export default function GirviPage() {
         item.status === "Closed" ? item.closedDate : null,
         item.payments
       );
-
-      if (item.status === "Active") {
-        activeP += calc.principalRemaining;
-      }
+      if (item.status === "Active") activeP += calc.principalRemaining;
       totalInt += calc.totalInterestPaid;
       totalPrinc += calc.totalPrincipalPaid;
     });
@@ -824,7 +1015,6 @@ export default function GirviPage() {
     });
   }, [girviListState]);
 
-  // ✅ ROBUST NEXT ID FETCH
   const fetchNextId = async () => {
     try {
       const q = query(
@@ -833,28 +1023,15 @@ export default function GirviPage() {
         limit(1)
       );
       const snapshot = await getDocs(q);
-
       if (!snapshot.empty) {
         const lastData = snapshot.docs[0].data();
-        const lastId = Number(lastData.girviNumber);
-        if (!isNaN(lastId)) {
-          setNextGirviId(lastId + 1);
-        } else {
-          setNextGirviId(1001);
-        }
+        setNextGirviId(Number(lastData.girviNumber) + 1);
       } else {
         setNextGirviId(1001);
       }
     } catch (err) {
-      console.error("Error fetching next ID:", err);
-      if (girviListState.length > 0) {
-        const maxId = Math.max(
-          ...girviListState.map((g) => Number(g.girviNumber) || 0)
-        );
-        setNextGirviId(maxId + 1);
-      } else {
-        setNextGirviId(1001);
-      }
+      console.error(err);
+      setNextGirviId(1001);
     }
   };
 
@@ -866,17 +1043,6 @@ export default function GirviPage() {
   const handleSearch = async (value) => {
     setSearch(value);
     setCurrentPage(1);
-
-    if (!value.trim()) {
-      const q = query(
-        collection(db, "girvi_records"),
-        orderBy("createdAt", "desc")
-      );
-      const snap = await getDocs(q);
-      setGirviListState(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      return;
-    }
-
     const colRef = collection(db, "girvi_records");
     const snap = await getDocs(colRef);
     const allDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -886,37 +1052,23 @@ export default function GirviPage() {
         item.name?.toLowerCase().includes(value.toLowerCase()) ||
         String(item.girviNumber).includes(value)
     );
-
     filtered.sort((a, b) => b.girviNumber - a.girviNumber);
     setGirviListState(filtered);
   };
 
   const handleDelete = async (id) => {
-    if (
-      window.confirm(
-        "Are you sure you want to delete this record? This action cannot be undone."
-      )
-    ) {
-      try {
-        await deleteDoc(doc(db, "girvi_records", id));
-        setGirviListState((prev) => prev.filter((item) => item.id !== id));
-        alert("Record deleted successfully.");
-      } catch (error) {
-        console.error("Error deleting document: ", error);
-        alert("Error deleting record.");
-      }
+    if (window.confirm("Are you sure? This cannot be undone.")) {
+      await deleteDoc(doc(db, "girvi_records", id));
+      setGirviListState((prev) => prev.filter((item) => item.id !== id));
     }
   };
 
-  // Filter Logic
   const filteredGirviList = useMemo(() => {
-    return girviListState.filter((item) => {
-      if (filterStatus === "All") return true;
-      return item.status === filterStatus;
-    });
+    return girviListState.filter((item) =>
+      filterStatus === "All" ? true : item.status === filterStatus
+    );
   }, [girviListState, filterStatus]);
 
-  // Pagination Logic
   const indexOfLastRecord = currentPage * recordsPerPage;
   const indexOfFirstRecord = indexOfLastRecord - recordsPerPage;
   const currentRecords = filteredGirviList.slice(
@@ -939,60 +1091,42 @@ export default function GirviPage() {
       status: "Active",
       createdAt: new Date().toISOString(),
     };
-
-    try {
-      await addDoc(collection(db, "girvi_records"), newGirvi);
-      alert(`Girvi #${newGirvi.girviNumber} Created Successfully 🎉`);
-      setShowForm(false);
-      handleSearch(""); // Refresh list
-    } catch (error) {
-      console.error(error);
-      alert("❌ Error saving data.");
-    }
+    await addDoc(collection(db, "girvi_records"), newGirvi);
+    alert(`Girvi #${newGirvi.girviNumber} Created 🎉`);
+    setShowForm(false);
+    handleSearch("");
   };
 
   const handleUpdate = useCallback(
     async (girviNumber, updates) => {
-      try {
-        const match = girviListState.find((g) => g.girviNumber === girviNumber);
-        if (!match) return;
-
-        const ref = doc(db, "girvi_records", match.id);
-        await updateDoc(ref, updates);
-
-        setGirviListState((prev) =>
-          prev.map((item) =>
-            item.girviNumber === girviNumber ? { ...item, ...updates } : item
-          )
-        );
-        setSelectedGirvi((prev) => (prev ? { ...prev, ...updates } : null));
-      } catch (error) {
-        console.error(error);
-        alert("Error updating record");
-      }
+      const match = girviListState.find((g) => g.girviNumber === girviNumber);
+      if (!match) return;
+      const ref = doc(db, "girvi_records", match.id);
+      await updateDoc(ref, updates);
+      setGirviListState((prev) =>
+        prev.map((item) =>
+          item.girviNumber === girviNumber ? { ...item, ...updates } : item
+        )
+      );
+      setSelectedGirvi((prev) => (prev ? { ...prev, ...updates } : null));
     },
     [girviListState]
   );
 
   return (
     <div className="space-y-6 p-4 sm:px-6 pb-24 max-w-7xl mx-auto">
-      {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-800">Girvi Management</h1>
-          <p className="text-gray-500 text-sm">
-            Create and manage mortgage entries
-          </p>
         </div>
         <button
           onClick={openForm}
-          className="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2.5 rounded-lg font-semibold shadow-lg flex items-center gap-2 transition transform active:scale-95"
+          className="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2.5 rounded-lg font-semibold shadow-lg flex items-center gap-2"
         >
           <FaPlus /> New Entry
         </button>
       </div>
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white p-4 rounded-xl shadow border border-gray-100 flex items-center gap-4">
           <div className="p-3 rounded-full bg-red-50 text-red-600">
@@ -1035,13 +1169,12 @@ export default function GirviPage() {
         </div>
       </div>
 
-      {/* Search & Filter */}
       <div className="flex flex-col md:flex-row gap-4 items-center">
         <div className="relative w-full md:w-1/2">
           <input
             type="text"
-            placeholder="Search by Name or Girvi ID..."
-            className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-yellow-500 focus:border-transparent transition"
+            placeholder="Search..."
+            className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-yellow-500 outline-none"
             onChange={(e) => handleSearch(e.target.value)}
           />
           <Search
@@ -1049,8 +1182,6 @@ export default function GirviPage() {
             size={20}
           />
         </div>
-
-        {/* Status Filters */}
         <div className="flex bg-gray-100 p-1 rounded-xl">
           {["All", "Active", "Closed"].map((status) => (
             <button
@@ -1061,7 +1192,7 @@ export default function GirviPage() {
               }}
               className={`px-4 py-2 text-sm font-bold rounded-lg transition ${
                 filterStatus === status
-                  ? "bg-white text-gray-800 shadow text-yellow-600"
+                  ? "bg-white text-yellow-600 shadow"
                   : "text-gray-500 hover:text-gray-700"
               }`}
             >
@@ -1071,21 +1202,18 @@ export default function GirviPage() {
         </div>
       </div>
 
-      {/* Table */}
       <GirviRecordsTable
         girviList={currentRecords}
-        totalRecords={filteredGirviList.length}
         onViewDetails={setSelectedGirvi}
         onDelete={handleDelete}
       />
 
-      {/* Main Page Pagination */}
       {totalPages > 1 && (
         <div className="flex justify-center items-center gap-4 mt-6">
           <button
             onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
             disabled={currentPage === 1}
-            className="px-4 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50 font-medium text-gray-600"
+            className="px-4 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50"
           >
             Previous
           </button>
@@ -1095,14 +1223,13 @@ export default function GirviPage() {
           <button
             onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
             disabled={currentPage === totalPages}
-            className="px-4 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50 font-medium text-gray-600"
+            className="px-4 py-2 bg-white border rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50"
           >
             Next
           </button>
         </div>
       )}
 
-      {/* Modals */}
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl overflow-y-auto max-h-[90vh]">
@@ -1133,9 +1260,6 @@ export default function GirviPage() {
   );
 }
 
-// ==========================================
-// 📝 FORM COMPONENT
-// ==========================================
 function GirviForm({ onSubmit, nextId }) {
   const [form, setForm] = useState({
     name: "",
@@ -1154,41 +1278,33 @@ function GirviForm({ onSubmit, nextId }) {
     remark: "",
     Address: "",
   });
-
   useEffect(() => {
     if (nextId) setForm((f) => ({ ...f, girviNumber: nextId }));
   }, [nextId]);
-
-  const update = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
+  const update = (e) => setForm({ ...form, [e.target.name]: e.target.value });
   const submit = () => {
-    if (!form.name || !form.amount || !form.date) {
-      alert("Please fill required fields (Name, Amount, Date)");
-      return;
-    }
+    if (!form.name || !form.amount || !form.date)
+      return alert("Fill required fields");
     onSubmit(form);
   };
-
   const inputClass =
-    "w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent text-sm outline-none";
+    "w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none text-sm";
   const labelClass =
     "block text-xs font-bold text-gray-500 uppercase mb-1 ml-1";
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
-        <div className="col-span-1">
+        <div>
           <label className={labelClass}>Girvi Number</label>
           <input
             name="girviNumber"
             value={form.girviNumber}
             readOnly
-            className={`${inputClass} bg-gray-100 font-bold text-gray-600 cursor-not-allowed`}
+            className={`${inputClass} bg-gray-100 font-bold text-gray-600`}
           />
         </div>
-        <div className="col-span-1">
+        <div>
           <label className={labelClass}>Date</label>
           <input
             type="date"
@@ -1199,55 +1315,48 @@ function GirviForm({ onSubmit, nextId }) {
           />
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Customer Name *</label>
+          <label className={labelClass}>Name *</label>
           <input
             name="name"
             value={form.name}
             onChange={update}
             className={inputClass}
-            placeholder="Enter name"
           />
         </div>
         <div>
-          <label className={labelClass}>Contact Number</label>
+          <label className={labelClass}>Mobile</label>
           <input
             name="contactNumber"
             value={form.contactNumber}
             onChange={update}
             className={inputClass}
-            placeholder="Mobile"
           />
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>Loan Amount (₹) *</label>
+          <label className={labelClass}>Amount (₹) *</label>
           <input
             type="number"
             name="amount"
             value={form.amount}
             onChange={update}
             className={`${inputClass} border-yellow-400`}
-            placeholder="0.00"
           />
         </div>
         <div>
-          <label className={labelClass}>Interest Rate (%)</label>
+          <label className={labelClass}>Rate (%)</label>
           <input
             type="number"
             name="interestRate"
             value={form.interestRate}
             onChange={update}
             className={inputClass}
-            placeholder="2"
           />
         </div>
       </div>
-
       <div>
         <label className={labelClass}>Item Description</label>
         <textarea
@@ -1256,19 +1365,16 @@ function GirviForm({ onSubmit, nextId }) {
           onChange={update}
           rows="2"
           className={inputClass}
-          placeholder="E.g., Gold Ring, 22k..."
         />
       </div>
-
       <div className="grid grid-cols-3 gap-3">
         <div>
-          <label className={labelClass}>Weight (g)</label>
+          <label className={labelClass}>Weight</label>
           <input
             name="weight"
             value={form.weight}
             onChange={update}
             className={inputClass}
-            placeholder="0.00"
           />
         </div>
         <div>
@@ -1278,7 +1384,6 @@ function GirviForm({ onSubmit, nextId }) {
             value={form.purity}
             onChange={update}
             className={inputClass}
-            placeholder="22k"
           />
         </div>
         <div>
@@ -1289,14 +1394,12 @@ function GirviForm({ onSubmit, nextId }) {
             value={form.marketValue}
             onChange={update}
             className={inputClass}
-            placeholder="₹"
           />
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className={labelClass}>ID Proof Type</label>
+          <label className={labelClass}>ID Type</label>
           <select
             name="idProofType"
             value={form.idProofType}
@@ -1310,17 +1413,15 @@ function GirviForm({ onSubmit, nextId }) {
           </select>
         </div>
         <div>
-          <label className={labelClass}>ID Number</label>
+          <label className={labelClass}>ID No</label>
           <input
             name="idProofNumber"
             value={form.idProofNumber}
             onChange={update}
             className={inputClass}
-            placeholder="ID No."
           />
         </div>
       </div>
-
       <div>
         <label className={labelClass}>Address</label>
         <textarea
@@ -1329,10 +1430,8 @@ function GirviForm({ onSubmit, nextId }) {
           onChange={update}
           rows="2"
           className={inputClass}
-          placeholder="Customer Address"
         />
       </div>
-
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className={labelClass}>Locker ID</label>
@@ -1341,7 +1440,6 @@ function GirviForm({ onSubmit, nextId }) {
             value={form.lockerId}
             onChange={update}
             className={inputClass}
-            placeholder="Box/Shelf No."
           />
         </div>
         <div>
@@ -1351,14 +1449,12 @@ function GirviForm({ onSubmit, nextId }) {
             value={form.remark}
             onChange={update}
             className={inputClass}
-            placeholder="Any notes"
           />
         </div>
       </div>
-
       <button
         onClick={submit}
-        className="w-full bg-yellow-600 text-white py-3 rounded-xl font-bold shadow hover:bg-yellow-700 transition mt-4 uppercase tracking-wide text-sm"
+        className="w-full bg-yellow-600 text-white py-3 rounded-xl font-bold shadow hover:bg-yellow-700 transition mt-4 uppercase text-sm"
       >
         Save Record
       </button>

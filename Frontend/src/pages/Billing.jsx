@@ -276,10 +276,11 @@ const Billing = () => {
     return val > 0 ? val : 0;
   }, [newItemsTotal, oldItemsTotal]);
 
+  // ✅ CHANGED: Taxable Amount is now equal to Subtotal (Discount is applied AFTER tax)
   const taxableAmount = useMemo(() => {
-    const val = subTotal - Number(discount || 0);
+    const val = subTotal; // Discount NOT subtracted here
     return val > 0 ? val : 0;
-  }, [subTotal, discount]);
+  }, [subTotal]);
 
   const cgst = useMemo(() => taxableAmount * CGST_RATE, [taxableAmount]);
   const sgst = useMemo(() => taxableAmount * SGST_RATE, [taxableAmount]);
@@ -287,10 +288,12 @@ const Billing = () => {
     return isIGSTEnabled ? taxableAmount * IGST_RATE : 0;
   }, [taxableAmount, isIGSTEnabled]);
 
-  const grandTotal = useMemo(
-    () => Math.round(taxableAmount + cgst + sgst + igstAmount),
-    [taxableAmount, cgst, sgst, igstAmount, subTotal]
-  );
+  // ✅ CHANGED: Grand Total subtracts Discount at the end
+  const grandTotal = useMemo(() => {
+    const totalWithTax = taxableAmount + cgst + sgst + igstAmount;
+    const finalTotal = totalWithTax - Number(discount || 0);
+    return Math.round(finalTotal > 0 ? finalTotal : 0);
+  }, [taxableAmount, cgst, sgst, igstAmount, discount]);
 
   const balanceDue = useMemo(() => {
     const received = Number(receivedAmount || 0);
@@ -1611,16 +1614,7 @@ const Billing = () => {
                       {formatCurrency(subTotal)}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-500">Discount</span>
-                    <input
-                      type="number"
-                      className="w-24 text-right border rounded p-1 text-sm"
-                      placeholder="0"
-                      value={discount}
-                      onChange={(e) => setDiscount(e.target.value)}
-                    />
-                  </div>
+
                   <div className="flex justify-between items-center text-sm text-gray-500">
                     <span>CGST (1.5%)</span>
                     <span>{formatCurrency(cgst)}</span>
@@ -1635,6 +1629,16 @@ const Billing = () => {
                       <span>{formatCurrency(igstAmount)}</span>
                     </div>
                   )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500">Discount</span>
+                    <input
+                      type="number"
+                      className="w-24 text-right border rounded p-1 text-sm"
+                      placeholder="0"
+                      value={discount}
+                      onChange={(e) => setDiscount(e.target.value)}
+                    />
+                  </div>
                   <div className="border-t border-gray-200 pt-3 flex justify-between items-center">
                     <span className="text-lg font-bold text-gray-800">
                       Grand Total
